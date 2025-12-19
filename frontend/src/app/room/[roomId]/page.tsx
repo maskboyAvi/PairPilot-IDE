@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import CollaborativeMonaco from "@/components/CollaborativeMonaco";
 
 export default async function RoomPage({
   params,
@@ -24,21 +25,7 @@ export default async function RoomPage({
       </p>
 
       <div style={{ marginTop: 16 }}>
-        <p style={{ marginTop: 0 }}>
-          Next: we’ll place Monaco here and connect Yjs.
-        </p>
-        <div
-          style={{
-            marginTop: 12,
-            height: 280,
-            border: "1px solid #ddd",
-            borderRadius: 8,
-            padding: 12,
-            background: "#fafafa",
-          }}
-        >
-          <p style={{ margin: 0, color: "#555" }}>Editor placeholder</p>
-        </div>
+        <CollaborativeMonaco roomId={roomId} />
       </div>
 
       <p style={{ marginTop: 16 }}>

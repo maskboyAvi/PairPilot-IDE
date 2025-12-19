@@ -19,3 +19,5 @@ We build in small milestones and learn as we go:
 3. explain what we did (you explain back, I’ll prompt)
 
 Start here: `docs/LEARNING_TODOS.md`.
+
+Build journal: [Learning/BuildLogic/README.md](Learning/BuildLogic/README.md)
