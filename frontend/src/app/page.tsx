@@ -11,6 +11,7 @@ export default function HomePage() {
 
       <div style={{ display: "flex", gap: 12, marginTop: 16 }}>
         <Link href="/login">Sign in</Link>
+        <Link href="/signup">Sign up</Link>
         <Link href="/app">Open app</Link>
       </div>
     </main>

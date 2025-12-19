@@ -1,12 +1,12 @@
 import Link from "next/link";
-import { signInWithPassword } from "./actions";
+import { signUpWithPassword } from "./actions";
 
 type SearchParams = {
   error?: string;
   message?: string;
 };
 
-export default async function LoginPage(props: {
+export default async function SignupPage(props: {
   searchParams: Promise<SearchParams>;
 }) {
   const searchParams = await props.searchParams;
@@ -16,10 +16,10 @@ export default async function LoginPage(props: {
   return (
     <main style={{ padding: 24, fontFamily: "system-ui" }}>
       <h1 style={{ margin: 0 }}>PairPilot IDE</h1>
-      <p style={{ marginTop: 8 }}>Sign in to continue.</p>
+      <p style={{ marginTop: 8 }}>Create your account.</p>
 
       <form
-        action={signInWithPassword}
+        action={signUpWithPassword}
         style={{ marginTop: 16, maxWidth: 360 }}
       >
         <label style={{ display: "block", marginBottom: 8 }}>
@@ -53,12 +53,12 @@ export default async function LoginPage(props: {
         ) : null}
 
         <button type="submit" style={{ marginTop: 12, padding: "8px 12px" }}>
-          Sign in
+          Sign up
         </button>
       </form>
 
       <p style={{ marginTop: 16 }}>
-        Don’t have an account yet? <Link href="/signup">Sign up</Link>
+        Already have an account? <Link href="/login">Sign in</Link>
       </p>
 
       <p style={{ marginTop: 16 }}>

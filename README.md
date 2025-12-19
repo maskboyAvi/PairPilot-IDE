@@ -1,4 +1,4 @@
-# Cloud-Native Collaborative IDE (Learning Build)
+# PairPilot IDE
 
 Goal: a Google-Docs-style collaborative code editor (Monaco + Yjs) that can run code in isolated containers with live CPU/RAM telemetry.
 
@@ -12,11 +12,10 @@ Goal: a Google-Docs-style collaborative code editor (Monaco + Yjs) that can run 
 
 ## How we’ll work (important)
 
-We build in small milestones:
+We build in small milestones and learn as we go:
 
-1. theory + mental model
-2. implement a thin slice
-3. verify demo
-4. you explain back (I’ll give prompts)
+1. implement a thin slice
+2. verify demo
+3. explain what we did (you explain back, I’ll prompt)
 
 Start here: `docs/LEARNING_TODOS.md`.
