@@ -29,7 +29,9 @@ export default async function RoomPage({
       </div>
 
       <p style={{ marginTop: 16 }}>
-        <Link href="/app">Back to Lobby</Link>
+        <Link href="/app" className="pp-linkButton">
+          Back to Lobby
+        </Link>
       </p>
     </main>
   );
