@@ -1,9 +1,12 @@
 package main
 
 import (
+	"errors"
 	"log"
+	"net"
 	"net/http"
 	"os"
+	"syscall"
 
 	"github.com/joho/godotenv"
 
@@ -35,6 +38,16 @@ func main() {
 	log.Printf("PairPilot engine listening on http://localhost%s", addr)
 	log.Printf("Supabase user check: GET %s", cfg.SupabaseURL+"/auth/v1/user")
 	if err := http.ListenAndServe(addr, httpHandler); err != nil {
+		// Friendly dev message for a common Windows issue.
+		var opErr *net.OpError
+		if errors.As(err, &opErr) {
+			var sysErr *os.SyscallError
+			if errors.As(opErr.Err, &sysErr) && errors.Is(sysErr.Err, syscall.EADDRINUSE) {
+				log.Printf("Port %s is already in use. Stop the other engine process or set PORT in engine/.env.", cfg.Port)
+				os.Exit(1)
+			}
+		}
+
 		log.Println(err)
 		os.Exit(1)
 	}

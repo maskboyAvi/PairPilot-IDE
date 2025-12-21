@@ -12,48 +12,63 @@ export default async function AppPage() {
   }
 
   return (
-    <main style={{ padding: 24, fontFamily: "system-ui" }}>
-      <h1 style={{ margin: 0 }}>PairPilot IDE</h1>
-      <p style={{ marginTop: 8 }}>Signed in as: {data.user.email}</p>
+    <main className="pp-page">
+      <div className="pp-container">
+        <div className="pp-topbar">
+          <div className="pp-brand">
+            <div className="pp-title">PairPilot IDE</div>
+            <div className="pp-subtle">Lobby</div>
+          </div>
+          <div className="pp-row">
+            <span className="pp-subtle">{data.user.email}</span>
+            <form action={signOut}>
+              <button type="submit" className="pp-buttonSecondary">
+                Sign out
+              </button>
+            </form>
+          </div>
+        </div>
 
-      <div style={{ marginTop: 20 }}>
-        <h2 style={{ margin: 0 }}>Lobby</h2>
-        <p style={{ marginTop: 8 }}>
-          Create a room and share the link with a friend.
-        </p>
+        <div className="pp-card">
+          <h1
+            style={{ fontSize: 26, fontWeight: 900, letterSpacing: "-0.6px" }}
+          >
+            Start a room
+          </h1>
+          <p className="pp-subtle" style={{ marginTop: 8 }}>
+            Anyone can join as a viewer. The owner can promote viewers to
+            editors from the participants menu.
+          </p>
 
-        <form action={createRoom} style={{ marginTop: 12 }}>
-          <button type="submit" style={{ padding: "8px 12px" }}>
-            Create Room
-          </button>
-        </form>
+          <div className="pp-row" style={{ marginTop: 14 }}>
+            <form action={createRoom}>
+              <button type="submit" className="pp-button">
+                Create room
+              </button>
+            </form>
+          </div>
+        </div>
 
-        <form
-          action="/room"
-          method="get"
-          style={{
-            marginTop: 12,
-            display: "flex",
-            gap: 8,
-            alignItems: "center",
-          }}
-        >
-          <input
-            name="id"
-            placeholder="Enter room id (e.g. abcd-efgh)"
-            style={{ padding: 8, minWidth: 240 }}
-          />
-          <button type="submit" style={{ padding: "8px 12px" }}>
-            Join
-          </button>
-        </form>
+        <div className="pp-card">
+          <h2 style={{ fontSize: 18, fontWeight: 800 }}>Join a room</h2>
+          <form
+            action="/room"
+            method="get"
+            className="pp-row"
+            style={{ marginTop: 12 }}
+          >
+            <input
+              className="pp-input"
+              name="id"
+              placeholder="Enter room code (e.g. abcd-efgh)"
+              style={{ maxWidth: 360 }}
+            />
+            <button type="submit" className="pp-button">
+              Join
+            </button>
+          </form>
+        </div>
       </div>
-
-      <form action={signOut} style={{ marginTop: 16 }}>
-        <button type="submit" style={{ padding: "8px 12px" }}>
-          Sign out
-        </button>
-      </form>
     </main>
   );
 }

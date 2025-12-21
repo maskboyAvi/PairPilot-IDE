@@ -14,56 +14,67 @@ export default async function LoginPage(props: {
   const messageFromQuery = searchParams?.message;
 
   return (
-    <main style={{ padding: 24, fontFamily: "system-ui" }}>
-      <h1 style={{ margin: 0 }}>PairPilot IDE</h1>
-      <p style={{ marginTop: 8 }}>Sign in to continue.</p>
+    <main className="pp-page">
+      <div className="pp-container" style={{ maxWidth: 560 }}>
+        <div className="pp-topbar">
+          <div className="pp-brand">
+            <div className="pp-title">PairPilot IDE</div>
+            <div className="pp-subtle">Sign in</div>
+          </div>
+          <Link className="pp-linkButton" href="/">
+            Home
+          </Link>
+        </div>
 
-      <form
-        action={signInWithPassword}
-        style={{ marginTop: 16, maxWidth: 360 }}
-      >
-        <label style={{ display: "block", marginBottom: 8 }}>
-          Email
-          <input
-            name="email"
-            type="email"
-            required
-            style={{ width: "100%", padding: 8, marginTop: 4 }}
-            placeholder="you@example.com"
-          />
-        </label>
+        <div className="pp-card">
+          <p className="pp-subtle">Sign in to continue.</p>
 
-        <label style={{ display: "block", marginBottom: 8 }}>
-          Password
-          <input
-            name="password"
-            type="password"
-            required
-            style={{ width: "100%", padding: 8, marginTop: 4 }}
-            placeholder="••••••••"
-          />
-        </label>
+          <form action={signInWithPassword} style={{ marginTop: 14 }}>
+            <label style={{ display: "grid", gap: 8, marginTop: 10 }}>
+              <span className="pp-subtle">Email</span>
+              <input
+                className="pp-input"
+                name="email"
+                type="email"
+                required
+                placeholder="you@example.com"
+              />
+            </label>
 
-        {messageFromQuery ? (
-          <p style={{ color: "green", marginTop: 8 }}>{messageFromQuery}</p>
-        ) : null}
+            <label style={{ display: "grid", gap: 8, marginTop: 12 }}>
+              <span className="pp-subtle">Password</span>
+              <input
+                className="pp-input"
+                name="password"
+                type="password"
+                required
+                placeholder="••••••••"
+              />
+            </label>
 
-        {errorFromQuery ? (
-          <p style={{ color: "crimson", marginTop: 8 }}>{errorFromQuery}</p>
-        ) : null}
+            {messageFromQuery ? (
+              <p style={{ color: "#7CFFB2", marginTop: 10 }}>
+                {messageFromQuery}
+              </p>
+            ) : null}
 
-        <button type="submit" style={{ marginTop: 12, padding: "8px 12px" }}>
-          Sign in
-        </button>
-      </form>
+            {errorFromQuery ? (
+              <p style={{ color: "var(--pp-danger)", marginTop: 10 }}>
+                {errorFromQuery}
+              </p>
+            ) : null}
 
-      <p style={{ marginTop: 16 }}>
-        Don’t have an account yet? <Link href="/signup">Sign up</Link>
-      </p>
-
-      <p style={{ marginTop: 16 }}>
-        <Link href="/">Back to home</Link>
-      </p>
+            <div className="pp-row" style={{ marginTop: 14 }}>
+              <button type="submit" className="pp-button">
+                Sign in
+              </button>
+              <Link className="pp-buttonSecondary" href="/signup">
+                Create account
+              </Link>
+            </div>
+          </form>
+        </div>
+      </div>
     </main>
   );
 }

@@ -14,6 +14,40 @@ type Props = {
 const DEFAULT_WS_URL = "ws://localhost:1234";
 const DEFAULT_ENGINE_URL = "http://localhost:8080";
 
+type Role = "viewer" | "editor";
+
+type PresenceUser = {
+  id: string;
+  name: string;
+  color: string;
+  colorLight: string;
+};
+
+type Participant = {
+  clientId: number;
+  userId: string;
+  name: string;
+  role: Role;
+  color: string;
+  isOwner: boolean;
+};
+
+function hashToHue(input: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < input.length; i++) {
+    h ^= input.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return Math.abs(h) % 360;
+}
+
+function presenceColor(userId: string): { color: string; colorLight: string } {
+  const hue = hashToHue(userId);
+  const color = `hsl(${hue} 92% 62%)`;
+  const colorLight = `hsla(${hue} 92% 62% / 0.28)`;
+  return { color, colorLight };
+}
+
 type SharedRunState = {
   state: "idle" | "starting" | "running" | "finished" | "error" | "canceled";
   runId: string | null;
@@ -134,8 +168,15 @@ export default function CollaborativeMonaco({ roomId }: Props) {
   const yStdout = useMemo(() => ydoc.getText("run:stdout"), [ydoc]);
   const yStderr = useMemo(() => ydoc.getText("run:stderr"), [ydoc]);
   const yRuns = useMemo(() => ydoc.getArray<unknown>("runs"), [ydoc]);
+  const yRoom = useMemo(() => ydoc.getMap<unknown>("room"), [ydoc]);
+  const yRoles = useMemo(() => ydoc.getMap<unknown>("roles"), [ydoc]);
   const providerRef = useRef<WebsocketProvider | null>(null);
+  const [provider, setProvider] = useState<WebsocketProvider | null>(null);
   const bindingRef = useRef<{ destroy: () => void } | null>(null);
+  const monacoModelRef = useRef<
+    import("monaco-editor").editor.ITextModel | null
+  >(null);
+  const bindingInitInFlightRef = useRef<Promise<void> | null>(null);
   const editorRef = useRef<
     import("monaco-editor").editor.IStandaloneCodeEditor | null
   >(null);
@@ -154,6 +195,11 @@ export default function CollaborativeMonaco({ roomId }: Props) {
   const [selectedLanguage, setSelectedLanguage] =
     useState<SharedRunState["language"]>("python");
 
+  const [me, setMe] = useState<PresenceUser | null>(null);
+  const [ownerId, setOwnerId] = useState<string | null>(null);
+  const [myRole, setMyRole] = useState<Role>("viewer");
+  const [participants, setParticipants] = useState<Participant[]>([]);
+
   const isRunBusy =
     sharedRun.state === "starting" || sharedRun.state === "running";
 
@@ -162,9 +208,67 @@ export default function CollaborativeMonaco({ roomId }: Props) {
     sharedRun.phase === "preparing" ||
     (sharedRun.message?.toLowerCase().includes("docker") ?? false);
 
+  const isOwner = !!(me?.id && ownerId && me.id === ownerId);
+  const effectiveRole: Role = isOwner ? "editor" : myRole;
+  const canEdit = effectiveRole === "editor" && !isRunBusy;
+
+  const labelRemoteSelections = () => {
+    // Best-effort: y-monaco uses class names that include the clientId.
+    // We add `data-user` for CSS to show a Google-Docs-like label.
+    try {
+      for (const p of participants) {
+        const heads = document.querySelectorAll(
+          `.yRemoteSelectionHead-${p.clientId}, .yRemoteSelectionHead-${p.clientId} *`
+        );
+        heads.forEach((el) => {
+          if (el instanceof HTMLElement) el.dataset.user = p.name;
+        });
+      }
+    } catch {
+      // ignore DOM labeling failures
+    }
+  };
+
+  const ensureMonacoBinding = () => {
+    const currentProvider = providerRef.current;
+    const editor = editorRef.current;
+    const model = monacoModelRef.current;
+    if (!currentProvider || !editor || !model) return;
+
+    // Avoid double-init while the dynamic import is in flight.
+    if (bindingRef.current) return;
+    if (bindingInitInFlightRef.current) return;
+
+    bindingInitInFlightRef.current = (async () => {
+      try {
+        const ytext = ydoc.getText("monaco");
+
+        // Seed initial text once so everyone sees the same starting content.
+        if (ytext.length === 0) {
+          ydoc.transact(() => {
+            if (ytext.length === 0) {
+              ytext.insert(0, "print('Hello from PairPilot IDE')\n");
+            }
+          });
+        }
+
+        const { MonacoBinding } = await import("y-monaco");
+        bindingRef.current?.destroy();
+        bindingRef.current = new MonacoBinding(
+          ytext,
+          model,
+          new Set([editor]),
+          currentProvider.awareness
+        );
+      } finally {
+        bindingInitInFlightRef.current = null;
+      }
+    })();
+  };
+
   useEffect(() => {
     const supabase = createSupabaseBrowserClient();
-    let provider: WebsocketProvider | null = null;
+    let prov: WebsocketProvider | null = null;
 
     const start = async () => {
       const {
@@ -178,16 +282,36 @@ export default function CollaborativeMonaco({ roomId }: Props) {
         return;
       }
 
-      provider = new WebsocketProvider(wsUrl, `pairpilot:${roomId}`, ydoc, {
+      const userId = session?.user?.id || session?.user?.email || "unknown";
+      const userName = session?.user?.email || session?.user?.id || "Someone";
+      const { color, colorLight } = presenceColor(userId);
+      const nextMe: PresenceUser = {
+        id: userId,
+        name: userName,
+        color,
+        colorLight,
+      };
+      setMe(nextMe);
+
+      prov = new WebsocketProvider(wsUrl, `pairpilot:${roomId}`, ydoc, {
         connect: true,
         params: { token },
       });
 
-      providerRef.current = provider;
+      providerRef.current = prov;
+      setProvider(prov);
+
+      // Presence / cursor colors + role metadata.
+      prov.awareness.setLocalStateField("user", {
+        name: nextMe.name,
+        color: nextMe.color,
+        colorLight: nextMe.colorLight,
+        id: nextMe.id,
+      });
 
       const updateStatus = () => {
         // y-websocket uses ws-readyState numbers. Keep it simple.
-        const state = provider?.ws?.readyState;
+        const state = prov?.ws?.readyState;
         if (state === 0) setStatus("connecting");
         else if (state === 1) setStatus("connected");
         else if (state === 3) setStatus("disconnected");
@@ -195,14 +319,29 @@ export default function CollaborativeMonaco({ roomId }: Props) {
 
       updateStatus();
 
-      provider.on("status", ({ status }) => {
+      prov.on("status", ({ status }) => {
         if (status === "connected") setStatus("connected");
         else if (status === "disconnected") setStatus("disconnected");
         else setStatus("connecting");
       });
 
-      provider.on("connection-error", () => {
+      prov.on("connection-error", () => {
         setStatus("error");
+      });
+
+      // Room ownership + roles (Yjs-backed).
+      ydoc.transact(() => {
+        const existingOwner =
+          (yRoom.get("ownerId") as string | undefined) ?? null;
+        if (!existingOwner) yRoom.set("ownerId", nextMe.id);
+        const finalOwner =
+          (yRoom.get("ownerId") as string | undefined) ?? nextMe.id;
+        if (finalOwner === nextMe.id) {
+          // Ensure the owner is always an editor.
+          yRoles.set(nextMe.id, "editor");
+        } else if (!yRoles.has(nextMe.id)) {
+          yRoles.set(nextMe.id, "viewer");
+        }
       });
 
       // Initialize shared run state if missing.
@@ -237,13 +376,91 @@ export default function CollaborativeMonaco({ roomId }: Props) {
       runWsRef.current?.close();
       runWsRef.current = null;
 
-      provider?.destroy();
+      prov?.destroy();
       providerRef.current = null;
+      setProvider(null);
 
       ydoc.destroy();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomId, wsUrl]);
+
+  useEffect(() => {
+    const applyRoomSnapshot = () => {
+      const nextOwner = (yRoom.get("ownerId") as string | null) ?? null;
+      setOwnerId(nextOwner);
+
+      if (me?.id) {
+        const role = (yRoles.get(me.id) as Role | undefined) ?? "viewer";
+        setMyRole(role);
+      }
+    };
+
+    applyRoomSnapshot();
+    const onRoom = () => applyRoomSnapshot();
+    const onRoles = () => applyRoomSnapshot();
+    yRoom.observe(onRoom);
+    yRoles.observe(onRoles);
+
+    return () => {
+      yRoom.unobserve(onRoom);
+      yRoles.unobserve(onRoles);
+    };
+  }, [me?.id, yRoom, yRoles]);
+
+  useEffect(() => {
+    if (!provider) return;
+
+    const computeParticipants = () => {
+      const states = provider.awareness.getStates() as Map<number, any>;
+      const next: Participant[] = [];
+      states.forEach((st, clientId) => {
+        const u = (st?.user ?? null) as {
+          id?: string;
+          name?: string;
+          color?: string;
+        } | null;
+        if (!u?.id) return;
+        const userId = u.id;
+        const name = u.name || userId;
+        const role = ((yRoles.get(userId) as Role | undefined) ??
+          "viewer") as Role;
+        const isOwnerUser = !!(ownerId && ownerId === userId);
+        next.push({
+          clientId,
+          userId,
+          name,
+          role: isOwnerUser ? "editor" : role,
+          color: u.color || presenceColor(userId).color,
+          isOwner: isOwnerUser,
+        });
+      });
+      next.sort((a, b) => {
+        if (a.isOwner && !b.isOwner) return -1;
+        if (!a.isOwner && b.isOwner) return 1;
+        return a.name.localeCompare(b.name);
+      });
+      setParticipants(next);
+      requestAnimationFrame(() => labelRemoteSelections());
+    };
+
+    computeParticipants();
+    const onAwareness = () => computeParticipants();
+    provider.awareness.on("change", onAwareness);
+    const onRoles = () => computeParticipants();
+    yRoles.observe(onRoles);
+
+    return () => {
+      provider.awareness.off("change", onAwareness);
+      yRoles.unobserve(onRoles);
+    };
+  }, [provider, ownerId, yRoles, participants.length]);
+
+  useEffect(() => {
+    // If the editor mounted before the provider was ready, bind now.
+    ensureMonacoBinding();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [provider]);
 
   useEffect(() => {
     const applyRunSnapshot = () => {
@@ -336,6 +553,8 @@ export default function CollaborativeMonaco({ roomId }: Props) {
   const runCode = async () => {
     const current = (yRun.get("state") as string) || "idle";
     if (current === "starting" || current === "running") return;
+
+    if (effectiveRole !== "editor") return;
 
     runWsRef.current?.close();
     runWsRef.current = null;
@@ -592,15 +811,104 @@ export default function CollaborativeMonaco({ roomId }: Props) {
     }, 1000);
   };
 
+  const setRoleForUser = (userId: string, role: Role) => {
+    if (!isOwner) return;
+    if (!ownerId) return;
+    if (userId === ownerId) return;
+    ydoc.transact(() => {
+      yRoles.set(userId, role);
+    });
+  };
+
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between" }}>
-        <p style={{ margin: 0, color: "#555" }}>
+        <div className="pp-subtle">
           Realtime status: <strong>{status}</strong>
-        </p>
-        <p style={{ margin: 0, color: "#555" }}>
-          WS: <span>{wsUrl}</span>
-        </p>
+          {effectiveRole === "viewer" ? (
+            <span style={{ marginLeft: 10 }}>(view-only)</span>
+          ) : null}
+        </div>
+
+        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+          <details>
+            <summary className="pp-linkButton" style={{ cursor: "pointer" }}>
+              People ({participants.length})
+            </summary>
+            <div className="pp-panel" style={{ marginTop: 10, width: 320 }}>
+              <div className="pp-subtle" style={{ marginBottom: 10 }}>
+                Everyone joins as viewer. Only the owner can promote editors.
+              </div>
+              {participants.length === 0 ? (
+                <div className="pp-subtle">(no one connected)</div>
+              ) : (
+                <div style={{ display: "grid", gap: 8 }}>
+                  {participants.map((p) => (
+                    <div
+                      key={`${p.userId}-${p.clientId}`}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        gap: 10,
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 10,
+                        }}
+                      >
+                        <span
+                          aria-hidden="true"
+                          style={{
+                            width: 10,
+                            height: 10,
+                            borderRadius: 999,
+                            background: p.color,
+                            boxShadow: `0 0 0 3px ${p.color}22`,
+                          }}
+                        />
+                        <div>
+                          <div style={{ fontWeight: 700 }}>
+                            {p.name}
+                            {p.isOwner ? (
+                              <span
+                                className="pp-subtle"
+                                style={{ marginLeft: 8 }}
+                              >
+                                owner
+                              </span>
+                            ) : null}
+                          </div>
+                          <div className="pp-subtle" style={{ fontSize: 12 }}>
+                            {p.role}
+                          </div>
+                        </div>
+                      </div>
+
+                      {isOwner && !p.isOwner ? (
+                        <select
+                          className="pp-select"
+                          value={p.role}
+                          onChange={(e) =>
+                            setRoleForUser(p.userId, e.target.value as Role)
+                          }
+                        >
+                          <option value="viewer">viewer</option>
+                          <option value="editor">editor</option>
+                        </select>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </details>
+
+          <div className="pp-subtle">WS: {wsUrl}</div>
+        </div>
       </div>
 
       {isRunBusy ? (
@@ -641,7 +949,7 @@ export default function CollaborativeMonaco({ roomId }: Props) {
         <button
           type="button"
           onClick={() => void runCode()}
-          disabled={isRunBusy}
+          disabled={isRunBusy || effectiveRole !== "editor"}
           className="pp-button"
         >
           {isRunBusy ? "Running…" : "Run"}
@@ -652,7 +960,7 @@ export default function CollaborativeMonaco({ roomId }: Props) {
             display: "flex",
             gap: 8,
             alignItems: "center",
-            color: "#555",
+            color: "var(--pp-muted)",
           }}
         >
           Language
@@ -661,11 +969,13 @@ export default function CollaborativeMonaco({ roomId }: Props) {
             onChange={(e) =>
               setSelectedLanguage(e.target.value as SharedRunState["language"])
             }
-            disabled={isRunBusy}
+            disabled={isRunBusy || effectiveRole !== "editor"}
             style={{
-              padding: "6px 8px",
-              borderRadius: 8,
-              border: "1px solid #ddd",
+              padding: "10px 12px",
+              borderRadius: 12,
+              border: "1px solid var(--pp-border)",
+              background: "rgba(0, 0, 0, 0.35)",
+              color: "var(--foreground)",
             }}
           >
             <option value="python">Python</option>
@@ -673,18 +983,20 @@ export default function CollaborativeMonaco({ roomId }: Props) {
           </select>
         </label>
 
-        <p style={{ margin: 0, color: "#555" }}>
-          Engine: <span>{engineUrl}</span>
+        <p style={{ margin: 0, color: "var(--pp-muted)" }}>
+          Engine: {engineUrl}
         </p>
 
-        <p style={{ margin: 0, color: "#555" }}>
+        <p style={{ margin: 0, color: "var(--pp-muted)" }}>
           Run: <strong>{sharedRun.state}</strong>
           {sharedRun.runId ? <span> ({sharedRun.runId})</span> : null}
         </p>
       </div>
 
       {sharedRun.error ? (
-        <p style={{ marginTop: 8, color: "#b00020" }}>{sharedRun.error}</p>
+        <p style={{ marginTop: 8, color: "var(--pp-danger)" }}>
+          {sharedRun.error}
+        </p>
       ) : null}
 
       {sharedRun.prepMs != null || sharedRun.elapsedMs != null ? (
@@ -745,45 +1057,39 @@ export default function CollaborativeMonaco({ roomId }: Props) {
         </div>
       ) : null}
 
-      <div style={{ marginTop: 12, border: "1px solid #ddd", borderRadius: 8 }}>
+      <div
+        style={{
+          marginTop: 12,
+          border: "1px solid var(--pp-border)",
+          borderRadius: 16,
+          overflow: "hidden",
+          background: "rgba(0,0,0,0.25)",
+        }}
+      >
         <Editor
           height="420px"
           language={selectedLanguage}
           defaultValue={"print('Hello from PairPilot IDE')\n"}
+          theme="vs-dark"
           options={{
             fontSize: 14,
             minimap: { enabled: false },
             scrollBeyondLastLine: false,
-            readOnly: isRunBusy,
+            readOnly: !canEdit,
           }}
           onMount={(editor, monaco) => {
             editorRef.current = editor;
-            const provider = providerRef.current;
-            if (!provider) return;
-
-            // Use a shared Y.Text as the canonical document.
-            const ytext = ydoc.getText("monaco");
-
             const model = editor.getModel();
             if (!model) return;
+            monacoModelRef.current = model;
 
-            // Bind Monaco <-> Yjs.
-            // IMPORTANT: y-monaco touches `window` at module-eval time, so we must import it dynamically.
-            void (async () => {
-              const { MonacoBinding } = await import("y-monaco");
-
-              bindingRef.current?.destroy();
-              bindingRef.current = new MonacoBinding(
-                ytext,
-                model,
-                new Set([editor]),
-                provider.awareness
-              );
-            })();
+            // Bind Monaco <-> Yjs (handles provider/editor race).
+            ensureMonacoBinding();
 
             // Quality-of-life: make remote cursors more readable.
             try {
-              (monaco as typeof Monaco).editor.setTheme("vs");
+              (monaco as typeof Monaco).editor.setTheme("vs-dark");
+              labelRemoteSelections();
             } catch {
               // theme is optional
             }
@@ -791,19 +1097,12 @@ export default function CollaborativeMonaco({ roomId }: Props) {
         />
       </div>
 
-      <div
-        style={{
-          marginTop: 12,
-          border: "1px solid #ddd",
-          borderRadius: 8,
-          padding: 12,
-        }}
-      >
-        <p style={{ marginTop: 0, marginBottom: 8, color: "#555" }}>
+      <div className="pp-panel" style={{ marginTop: 12 }}>
+        <p className="pp-subtle" style={{ marginBottom: 8 }}>
           <strong>recent runs</strong>
         </p>
         {yRuns.length === 0 ? (
-          <p style={{ margin: 0, color: "#777" }}>(none yet)</p>
+          <p className="pp-subtle">(none yet)</p>
         ) : (
           <div style={{ display: "grid", gap: 6 }}>
             {Array.from(yRuns.toArray())
@@ -825,8 +1124,8 @@ export default function CollaborativeMonaco({ roomId }: Props) {
                       gap: 12,
                     }}
                   >
-                    <span style={{ color: "#333" }}>{label}</span>
-                    <span style={{ color: "#777" }}>{item.runBy || ""}</span>
+                    <span style={{ color: "var(--foreground)" }}>{label}</span>
+                    <span className="pp-subtle">{item.runBy || ""}</span>
                   </div>
                 );
               })}
@@ -842,19 +1141,31 @@ export default function CollaborativeMonaco({ roomId }: Props) {
           gap: 12,
         }}
       >
-        <div style={{ border: "1px solid #ddd", borderRadius: 8, padding: 12 }}>
-          <p style={{ marginTop: 0, marginBottom: 8, color: "#555" }}>
+        <div className="pp-panel">
+          <p className="pp-subtle" style={{ marginBottom: 8 }}>
             <strong>stdout</strong>
           </p>
-          <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>
+          <pre
+            style={{
+              margin: 0,
+              whiteSpace: "pre-wrap",
+              color: "var(--foreground)",
+            }}
+          >
             {stdout || "(empty)"}
           </pre>
         </div>
-        <div style={{ border: "1px solid #ddd", borderRadius: 8, padding: 12 }}>
-          <p style={{ marginTop: 0, marginBottom: 8, color: "#555" }}>
+        <div className="pp-panel">
+          <p className="pp-subtle" style={{ marginBottom: 8 }}>
             <strong>stderr</strong>
           </p>
-          <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>
+          <pre
+            style={{
+              margin: 0,
+              whiteSpace: "pre-wrap",
+              color: "var(--foreground)",
+            }}
+          >
             {stderr || "(empty)"}
           </pre>
         </div>

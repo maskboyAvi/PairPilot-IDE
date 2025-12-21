@@ -4,6 +4,7 @@ import http from "node:http";
 import { WebSocketServer } from "ws";
 import type { IncomingMessage } from "node:http";
 import type WebSocket from "ws";
+import process from "node:process";
 
 // NOTE: y-websocket exposes server helpers via bin/utils.
 // This is a common pattern used for custom-auth servers.
@@ -88,6 +89,19 @@ const server = http.createServer((req, res) => {
 });
 
 const wss = new WebSocketServer({ noServer: true });
+
+server.on("error", (err: any) => {
+  if (err?.code === "EADDRINUSE") {
+    // eslint-disable-next-line no-console
+    console.error(
+      `Port ${PORT} is already in use. Stop the other collab server or set PORT to a different value (collab/.env).`
+    );
+    process.exit(1);
+  }
+  // eslint-disable-next-line no-console
+  console.error("Collab server error:", err);
+  process.exit(1);
+});
 
 server.on("upgrade", async (req, socket, head) => {
   try {

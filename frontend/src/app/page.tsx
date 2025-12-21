@@ -2,17 +2,41 @@ import Link from "next/link";
 
 export default function HomePage() {
   return (
-    <main style={{ padding: 24, fontFamily: "system-ui" }}>
-      <h1 style={{ margin: 0 }}>PairPilot IDE</h1>
-      <p style={{ marginTop: 8 }}>
-        Real-time collaborative editor + secure cloud execution (built
-        step-by-step).
-      </p>
+    <main className="pp-page">
+      <div className="pp-container">
+        <div className="pp-topbar">
+          <div className="pp-brand">
+            <div className="pp-title">PairPilot IDE</div>
+            <div className="pp-subtle">Collaborative coding, shared runs</div>
+          </div>
+          <div className="pp-row">
+            <Link className="pp-linkButton" href="/login">
+              Sign in
+            </Link>
+            <Link className="pp-linkButton" href="/signup">
+              Sign up
+            </Link>
+          </div>
+        </div>
 
-      <div style={{ display: "flex", gap: 12, marginTop: 16 }}>
-        <Link href="/login">Sign in</Link>
-        <Link href="/signup">Sign up</Link>
-        <Link href="/app">Open app</Link>
+        <div className="pp-card">
+          <h1 style={{ fontSize: 34, fontWeight: 900, letterSpacing: "-1px" }}>
+            Real-time collaborative IDE
+          </h1>
+          <p className="pp-subtle" style={{ marginTop: 10, maxWidth: 760 }}>
+            A Google-Docs-style editor with a secure execution engine and shared
+            live output.
+          </p>
+
+          <div className="pp-row" style={{ marginTop: 16 }}>
+            <Link className="pp-button" href="/app">
+              Open app
+            </Link>
+            <Link className="pp-buttonSecondary" href="/login">
+              Sign in
+            </Link>
+          </div>
+        </div>
       </div>
     </main>
   );
