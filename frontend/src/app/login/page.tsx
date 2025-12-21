@@ -31,13 +31,13 @@ export default async function LoginPage(props: {
 
           <form action={signInWithPassword} style={{ marginTop: 14 }}>
             <label style={{ display: "grid", gap: 8, marginTop: 10 }}>
-              <span className="pp-subtle">Email</span>
+              <span className="pp-subtle">Email or username</span>
               <input
                 className="pp-input"
-                name="email"
-                type="email"
+                name="identifier"
+                type="text"
                 required
-                placeholder="you@example.com"
+                placeholder="you@example.com or alex"
               />
             </label>
 

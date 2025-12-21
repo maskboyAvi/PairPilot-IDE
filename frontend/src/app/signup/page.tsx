@@ -31,6 +31,17 @@ export default async function SignupPage(props: {
 
           <form action={signUpWithPassword} style={{ marginTop: 14 }}>
             <label style={{ display: "grid", gap: 8, marginTop: 10 }}>
+              <span className="pp-subtle">Username (max 10)</span>
+              <input
+                className="pp-input"
+                name="username"
+                type="text"
+                maxLength={10}
+                placeholder="e.g. alex"
+              />
+            </label>
+
+            <label style={{ display: "grid", gap: 8, marginTop: 10 }}>
               <span className="pp-subtle">Email</span>
               <input
                 className="pp-input"

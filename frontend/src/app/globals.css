@@ -241,11 +241,20 @@ a {
   padding: 3px 6px;
   font-size: 11px;
   border-radius: 8px;
-  background: rgba(0, 0, 0, 0.75);
+  background: rgba(0, 0, 0, 0.35);
   border: 1px solid var(--pp-border);
   color: var(--foreground);
   white-space: nowrap;
   pointer-events: none;
+  backdrop-filter: blur(6px);
+  opacity: 0;
+  transform: translateY(-2px);
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+
+.yRemoteSelectionHead[data-pp-show="1"]::after {
+  opacity: 1;
+  transform: translateY(0);
 }
 
 html {

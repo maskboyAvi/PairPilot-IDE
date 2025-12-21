@@ -29,6 +29,7 @@ type Participant = {
   name: string;
   role: Role;
   color: string;
+  colorLight: string;
   isOwner: boolean;
 };
 
@@ -43,9 +44,29 @@ function hashToHue(input: string): number {
 
 function presenceColor(userId: string): { color: string; colorLight: string } {
   const hue = hashToHue(userId);
-  const color = `hsl(${hue} 92% 62%)`;
-  const colorLight = `hsla(${hue} 92% 62% / 0.28)`;
+  // Use comma-separated hsl/hsla for broad browser compatibility.
+  const color = `hsl(${hue}, 92%, 62%)`;
+  const colorLight = `hsla(${hue}, 92%, 62%, 0.28)`;
   return { color, colorLight };
+}
+
+function usernameFromUser(user: any): string {
+  const raw = String(user?.user_metadata?.username || "").trim();
+  const cleaned = raw
+    .toLowerCase()
+    .replace(/\s+/g, "")
+    .replace(/[^a-z0-9_\-]/g, "")
+    .slice(0, 10);
+  if (cleaned) return cleaned;
+
+  const email = String(user?.email || "");
+  const local = email.includes("@") ? email.split("@")[0] : "";
+  const fallback = String(local || user?.id || "user")
+    .toLowerCase()
+    .replace(/\s+/g, "")
+    .replace(/[^a-z0-9_\-]/g, "")
+    .slice(0, 10);
+  return fallback || "user";
 }
 
 type SharedRunState = {
@@ -173,10 +194,18 @@ export default function CollaborativeMonaco({ roomId }: Props) {
   const providerRef = useRef<WebsocketProvider | null>(null);
   const [provider, setProvider] = useState<WebsocketProvider | null>(null);
   const bindingRef = useRef<{ destroy: () => void } | null>(null);
+  const remoteStylesRef = useRef<HTMLStyleElement | null>(null);
+  const monacoRef = useRef<typeof Monaco | null>(null);
+  const sanitizeInFlightRef = useRef<boolean>(false);
   const monacoModelRef = useRef<
     import("monaco-editor").editor.ITextModel | null
   >(null);
   const bindingInitInFlightRef = useRef<Promise<void> | null>(null);
+  const boundModelRef = useRef<
+    import("monaco-editor").editor.ITextModel | null
+  >(null);
+  const boundProviderRef = useRef<WebsocketProvider | null>(null);
+  const seededDefaultRef = useRef<boolean>(false);
   const editorRef = useRef<
     import("monaco-editor").editor.IStandaloneCodeEditor | null
   >(null);
@@ -199,6 +228,7 @@ export default function CollaborativeMonaco({ roomId }: Props) {
   const [ownerId, setOwnerId] = useState<string | null>(null);
   const [myRole, setMyRole] = useState<Role>("viewer");
   const [participants, setParticipants] = useState<Participant[]>([]);
+  const [isSynced, setIsSynced] = useState<boolean>(false);
 
   const isRunBusy =
     sharedRun.state === "starting" || sharedRun.state === "running";
@@ -210,7 +240,9 @@ export default function CollaborativeMonaco({ roomId }: Props) {
 
   const isOwner = !!(me?.id && ownerId && me.id === ownerId);
   const effectiveRole: Role = isOwner ? "editor" : myRole;
-  const canEdit = effectiveRole === "editor" && !isRunBusy;
+  // Only allow edits once the initial provider sync completes.
+  // This avoids first-join races and also gives a clear "viewer-only until synced" behavior.
+  const canEdit = effectiveRole === "editor" && !isRunBusy && isSynced;
 
   const labelRemoteSelections = () => {
     // Best-effort: y-monaco uses class names that include the clientId.
@@ -218,10 +250,23 @@ export default function CollaborativeMonaco({ roomId }: Props) {
     try {
       for (const p of participants) {
         const heads = document.querySelectorAll(
-          `.yRemoteSelectionHead-${p.clientId}, .yRemoteSelectionHead-${p.clientId} *`
+          `.yRemoteSelectionHead-${p.clientId}`
         );
         heads.forEach((el) => {
-          if (el instanceof HTMLElement) el.dataset.user = p.name;
+          if (!(el instanceof HTMLElement)) return;
+          el.dataset.user = p.name;
+
+          // Show label briefly on hover (3s), otherwise keep hidden.
+          if (!el.dataset.ppHoverBound) {
+            el.dataset.ppHoverBound = "1";
+            el.addEventListener("mouseenter", () => {
+              el.dataset.ppShow = "1";
+              window.setTimeout(() => {
+                // Only clear if nothing re-triggered.
+                if (el.isConnected) delete el.dataset.ppShow;
+              }, 3000);
+            });
+          }
         });
       }
     } catch {
@@ -229,11 +274,86 @@ export default function CollaborativeMonaco({ roomId }: Props) {
     }
   };
 
+  const normalizeSharedNewlinesToLF = () => {
+    if (sanitizeInFlightRef.current) return;
+    const ytext = ydoc.getText("monaco");
+    const text = ytext.toString();
+    if (!text.includes("\r")) return;
+
+    sanitizeInFlightRef.current = true;
+    try {
+      const idxs: number[] = [];
+      for (let i = 0; i < text.length; i++) {
+        if (text.charCodeAt(i) === 13) idxs.push(i); // '\r'
+      }
+      if (idxs.length === 0) return;
+
+      ydoc.transact(() => {
+        for (let i = idxs.length - 1; i >= 0; i--) {
+          ytext.delete(idxs[i], 1);
+        }
+      }, "sanitize-eol");
+    } finally {
+      sanitizeInFlightRef.current = false;
+    }
+  };
+
+  const ensureRemoteCursorStyles = (ps: Participant[]) => {
+    if (!remoteStylesRef.current) {
+      const el = document.createElement("style");
+      el.setAttribute("data-pp-remote-cursors", "1");
+      document.head.appendChild(el);
+      remoteStylesRef.current = el;
+    }
+
+    const css = ps
+      .map((p) => {
+        const safeClientId = String(p.clientId).replace(/[^0-9]/g, "");
+        if (!safeClientId) return "";
+        return `
+.yRemoteSelection-${safeClientId} { background-color: ${p.colorLight} !important; }
+.yRemoteSelectionHead-${safeClientId} { border-left: 2px solid ${p.color} !important; }
+`;
+      })
+      .join("\n");
+
+    remoteStylesRef.current.textContent = css;
+  };
+
   const ensureMonacoBinding = () => {
     const currentProvider = providerRef.current;
     const editor = editorRef.current;
     const model = monacoModelRef.current;
     if (!currentProvider || !editor || !model) return;
+
+    // Bind Monaco <-> Yjs as soon as possible.
+    // We separately gate *editing* on `isSynced` so we don't end up with "two different editors"
+    // if the sync event is delayed for any reason.
+
+    // Keep newline semantics consistent (especially on Windows) to avoid cursor drift on Enter.
+    normalizeSharedNewlinesToLF();
+    try {
+      const m = monacoRef.current;
+      if (m) model.setEOL(m.editor.EndOfLineSequence.LF);
+    } catch {
+      // ignore
+    }
+
+    // If Monaco swapped its model (e.g. language/model recreation), we must rebind.
+    if (bindingRef.current && boundModelRef.current !== model) {
+      bindingRef.current.destroy();
+      bindingRef.current = null;
+      boundModelRef.current = null;
+      boundProviderRef.current = null;
+    }
+
+    // If the provider instance changed, also rebind.
+    if (bindingRef.current && boundProviderRef.current !== currentProvider) {
+      bindingRef.current.destroy();
+      bindingRef.current = null;
+      boundModelRef.current = null;
+      boundProviderRef.current = null;
+    }
 
     // Avoid double-init while the dynamic import is in flight.
     if (bindingRef.current) return;
@@ -243,15 +363,6 @@ export default function CollaborativeMonaco({ roomId }: Props) {
       try {
         const ytext = ydoc.getText("monaco");
 
-        // Seed initial text once so everyone sees the same starting content.
-        if (ytext.length === 0) {
-          ydoc.transact(() => {
-            if (ytext.length === 0) {
-              ytext.insert(0, "print('Hello from PairPilot IDE')\n");
-            }
-          });
-        }
-
         const { MonacoBinding } = await import("y-monaco");
         bindingRef.current?.destroy();
         bindingRef.current = new MonacoBinding(
@@ -260,6 +371,9 @@ export default function CollaborativeMonaco({ roomId }: Props) {
           new Set([editor]),
           currentProvider.awareness
         );
+
+        boundModelRef.current = model;
+        boundProviderRef.current = currentProvider;
       } finally {
         bindingInitInFlightRef.current = null;
       }
@@ -267,8 +381,23 @@ export default function CollaborativeMonaco({ roomId }: Props) {
   };
 
   useEffect(() => {
+    const ytext = ydoc.getText("monaco");
+    const onText = (evt: any) => {
+      if (evt?.transaction?.origin === "sanitize-eol") return;
+      normalizeSharedNewlinesToLF();
+    };
+    ytext.observe(onText);
+    return () => {
+      ytext.unobserve(onText);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
     const supabase = createSupabaseBrowserClient();
     let prov: WebsocketProvider | null = null;
+    let onSync: ((isSynced: boolean) => void) | null = null;
+    let onSynced: ((isSynced: boolean) => void) | null = null;
 
     const start = async () => {
       const {
@@ -283,7 +412,7 @@ export default function CollaborativeMonaco({ roomId }: Props) {
       }
 
       const userId = session?.user?.id || session?.user?.email || "unknown";
-      const userName = session?.user?.email || session?.user?.id || "Someone";
+      const userName = usernameFromUser(session?.user);
       const { color, colorLight } = presenceColor(userId);
       const nextMe: PresenceUser = {
         id: userId,
@@ -309,6 +438,74 @@ export default function CollaborativeMonaco({ roomId }: Props) {
         id: nextMe.id,
       });
 
+      // Track sync + seed the default snippet only after the provider is synced.
+      // Otherwise, refreshing can insert the snippet before remote content arrives.
+      const handleSynced = (nextSynced: boolean) => {
+        setIsSynced(nextSynced);
+        if (!nextSynced) return;
+
+        // Normalize newlines in the shared doc: ensure the Y.Text never contains `\r`.
+        // If `\r` exists, Monaco/CRDT offsets drift and cursor movement looks "every 2 Enters".
+        try {
+          const ytext = ydoc.getText("monaco");
+          const current = ytext.toString();
+          if (current.includes("\r")) {
+            const normalized = current
+              .replace(/\r\n/g, "\n")
+              .replace(/\r/g, "\n");
+            ydoc.transact(() => {
+              ytext.delete(0, ytext.length);
+              ytext.insert(0, normalized);
+            });
+          }
+        } catch {
+          // ignore normalization failures
+        }
+
+        // Room ownership + roles (Yjs-backed): run ONLY after initial sync.
+        // This prevents a late joiner from setting themselves as owner before they
+        // have received the existing owner's `ownerId`.
+        ydoc.transact(() => {
+          const existingOwner =
+            (yRoom.get("ownerId") as string | undefined) ?? null;
+          if (!existingOwner) yRoom.set("ownerId", nextMe.id);
+
+          const finalOwner =
+            (yRoom.get("ownerId") as string | undefined) ?? nextMe.id;
+          if (finalOwner === nextMe.id) {
+            // Ensure the owner is always an editor.
+            yRoles.set(nextMe.id, "editor");
+          } else if (!yRoles.has(nextMe.id)) {
+            // All visitors default to viewer.
+            yRoles.set(nextMe.id, "viewer");
+          }
+        });
+
+        // Seed the default snippet only after sync, and only if the shared doc is empty.
+        if (!seededDefaultRef.current) {
+          seededDefaultRef.current = true;
+          const ytext = ydoc.getText("monaco");
+          if (ytext.length === 0) {
+            ydoc.transact(() => {
+              if (ytext.length === 0) {
+                ytext.insert(0, "print('Hello from PairPilot IDE')\n");
+              }
+            });
+          }
+        }
+
+        // Ensure Monaco binding exists once we're synced.
+        ensureMonacoBinding();
+      };
+
+      onSync = handleSynced;
+      onSynced = handleSynced;
+      prov.on("sync", onSync);
+      // Some versions also emit `synced` explicitly.
+      // Listening to both is harmless and makes the binding more robust.
+      // @ts-expect-error - `synced` is emitted but not always typed.
+      prov.on("synced", onSynced);
+
       const updateStatus = () => {
         // y-websocket uses ws-readyState numbers. Keep it simple.
         const state = prov?.ws?.readyState;
@@ -327,21 +524,6 @@ export default function CollaborativeMonaco({ roomId }: Props) {
 
       prov.on("connection-error", () => {
         setStatus("error");
-      });
-
-      // Room ownership + roles (Yjs-backed).
-      ydoc.transact(() => {
-        const existingOwner =
-          (yRoom.get("ownerId") as string | undefined) ?? null;
-        if (!existingOwner) yRoom.set("ownerId", nextMe.id);
-        const finalOwner =
-          (yRoom.get("ownerId") as string | undefined) ?? nextMe.id;
-        if (finalOwner === nextMe.id) {
-          // Ensure the owner is always an editor.
-          yRoles.set(nextMe.id, "editor");
-        } else if (!yRoles.has(nextMe.id)) {
-          yRoles.set(nextMe.id, "viewer");
-        }
       });
 
       // Initialize shared run state if missing.
@@ -373,8 +555,21 @@ export default function CollaborativeMonaco({ roomId }: Props) {
       bindingRef.current?.destroy();
       bindingRef.current = null;
 
+      if (remoteStylesRef.current) {
+        remoteStylesRef.current.remove();
+        remoteStylesRef.current = null;
+      }
+
       runWsRef.current?.close();
       runWsRef.current = null;
+
+      try {
+        if (prov && onSync) prov.off("sync", onSync);
+        // @ts-expect-error - `synced` is emitted but not always typed.
+        if (prov && onSynced) prov.off("synced", onSynced);
+      } catch {
+        // ignore
+      }
 
       prov?.destroy();
       providerRef.current = null;
@@ -419,6 +614,7 @@ export default function CollaborativeMonaco({ roomId }: Props) {
           id?: string;
           name?: string;
           color?: string;
+          colorLight?: string;
         } | null;
         if (!u?.id) return;
         const userId = u.id;
@@ -432,6 +628,7 @@ export default function CollaborativeMonaco({ roomId }: Props) {
           name,
           role: isOwnerUser ? "editor" : role,
           color: u.color || presenceColor(userId).color,
+          colorLight: u.colorLight || presenceColor(userId).colorLight,
           isOwner: isOwnerUser,
         });
       });
@@ -441,6 +638,7 @@ export default function CollaborativeMonaco({ roomId }: Props) {
         return a.name.localeCompare(b.name);
       });
       setParticipants(next);
+      ensureRemoteCursorStyles(next);
       requestAnimationFrame(() => labelRemoteSelections());
     };
 
@@ -572,7 +770,7 @@ export default function CollaborativeMonaco({ roomId }: Props) {
       return;
     }
 
-    const me = session?.user?.email || session?.user?.id || "Someone";
+    const me = usernameFromUser(session?.user);
 
     const language = selectedLanguage;
 
@@ -944,6 +1142,8 @@ export default function CollaborativeMonaco({ roomId }: Props) {
           display: "flex",
           gap: 12,
           alignItems: "center",
+          flexWrap: "wrap",
+          rowGap: 10,
         }}
       >
         <button
@@ -1069,8 +1269,9 @@ export default function CollaborativeMonaco({ roomId }: Props) {
         <Editor
           height="420px"
           language={selectedLanguage}
-          defaultValue={"print('Hello from PairPilot IDE')\n"}
+          defaultValue={""}
           theme="vs-dark"
+          path={`pairpilot:${roomId}`}
           options={{
             fontSize: 14,
             minimap: { enabled: false },
@@ -1079,11 +1280,24 @@ export default function CollaborativeMonaco({ roomId }: Props) {
           }}
           onMount={(editor, monaco) => {
             editorRef.current = editor;
+            monacoRef.current = monaco as typeof Monaco;
             const model = editor.getModel();
             if (!model) return;
             monacoModelRef.current = model;
 
-            // Bind Monaco <-> Yjs (handles provider/editor race).
+            // Force LF so line offsets are consistent across platforms.
+            try {
+              model.setEOL(
+                (monaco as typeof Monaco).editor.EndOfLineSequence.LF
+              );
+            } catch {
+              // ignore
+            }
+
+            // Normalize any stray CR characters in the shared doc.
+            normalizeSharedNewlinesToLF();
+
+            // Bind Monaco <-> Yjs.
             ensureMonacoBinding();
 
             // Quality-of-life: make remote cursors more readable.
@@ -1095,42 +1309,6 @@ export default function CollaborativeMonaco({ roomId }: Props) {
             }
           }}
         />
-      </div>
-
-      <div className="pp-panel" style={{ marginTop: 12 }}>
-        <p className="pp-subtle" style={{ marginBottom: 8 }}>
-          <strong>recent runs</strong>
-        </p>
-        {yRuns.length === 0 ? (
-          <p className="pp-subtle">(none yet)</p>
-        ) : (
-          <div style={{ display: "grid", gap: 6 }}>
-            {Array.from(yRuns.toArray())
-              .slice()
-              .reverse()
-              .map((r, idx) => {
-                const item = r as any;
-                const label = `${
-                  item.language === "javascript" ? "js" : "py"
-                } · ${item.state} · ${fmtMs(item.elapsedMs)} · ${fmtBytes(
-                  item.stdoutBytes
-                )} / ${fmtBytes(item.stderrBytes)}`;
-                return (
-                  <div
-                    key={`${item.runId || "run"}-${idx}`}
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      gap: 12,
-                    }}
-                  >
-                    <span style={{ color: "var(--foreground)" }}>{label}</span>
-                    <span className="pp-subtle">{item.runBy || ""}</span>
-                  </div>
-                );
-              })}
-          </div>
-        )}
       </div>
 
       <div
@@ -1169,6 +1347,43 @@ export default function CollaborativeMonaco({ roomId }: Props) {
             {stderr || "(empty)"}
           </pre>
         </div>
+      </div>
+
+      <div className="pp-panel" style={{ marginTop: 12 }}>
+        <p className="pp-subtle" style={{ marginBottom: 8 }}>
+          <strong>recent runs</strong>
+        </p>
+        {yRuns.length === 0 ? (
+          <p className="pp-subtle">(none yet)</p>
+        ) : (
+          <div style={{ display: "grid", gap: 6 }}>
+            {Array.from(yRuns.toArray())
+              .slice()
+              .reverse()
+              .map((r, idx) => {
+                const item = r as any;
+                const label = `${
+                  item.language === "javascript" ? "js" : "py"
+                } · ${item.state} · ${fmtMs(item.elapsedMs)} · ${fmtBytes(
+                  item.stdoutBytes
+                )} / ${fmtBytes(item.stderrBytes)}`;
+                return (
+                  <div
+                    key={`${item.runId || "run"}-${idx}`}
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      gap: 12,
+                      flexWrap: "wrap",
+                    }}
+                  >
+                    <span style={{ color: "var(--foreground)" }}>{label}</span>
+                    <span className="pp-subtle">{item.runBy || ""}</span>
+                  </div>
+                );
+              })}
+          </div>
+        )}
       </div>
     </div>
   );
