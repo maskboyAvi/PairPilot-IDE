@@ -67,10 +67,8 @@ export async function signInWithPassword(formData: FormData) {
     const { data } = await supabase.auth.getUser();
     const user = data.user;
     if (user?.id && user.email) {
-      const username = deriveUsername(
-        user.email,
-        (user.user_metadata as any)?.username
-      );
+      const meta = (user.user_metadata ?? {}) as Record<string, unknown>;
+      const username = deriveUsername(user.email, meta.username);
       await supabase.from("profiles").upsert(
         {
           id: user.id,

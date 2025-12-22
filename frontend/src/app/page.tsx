@@ -24,8 +24,8 @@ export default function HomePage() {
             Real-time collaborative IDE
           </h1>
           <p className="pp-subtle" style={{ marginTop: 10, maxWidth: 760 }}>
-            A Google-Docs-style editor with a secure execution engine and shared
-            live output.
+            A Google-Docs-style editor with shared live output. Runs happen in
+            the browser (Web Workers, Pyodide for Python).
           </p>
 
           <div className="pp-row" style={{ marginTop: 16 }}>
