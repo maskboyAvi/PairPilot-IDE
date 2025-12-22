@@ -1,53 +1,101 @@
 # PairPilot IDE
 
-Goal: a Google-Docs-style collaborative code editor (Monaco + Yjs) that can run code in isolated containers with live CPU/RAM telemetry.
+PairPilot IDE is a Google-Docs-style collaborative code editor built with Monaco + Yjs, with Supabase Auth and presence. It also includes a deployment-friendly **Run** button that executes code **in the browser** (Web Workers + Pyodide).
 
-## Repo layout
+I originally prototyped this as a multi-service system, then intentionally simplified it to a **frontend + Supabase** architecture so it’s easy to deploy and demo without running any servers.
 
-- `frontend/` Next.js app (UI + auth)
-- `collab/` WebSocket server for Yjs sync + awareness (JWT protected)
-- `engine/` Go service that runs code in Docker and streams logs + stats (JWT protected)
-- `infra/` docker-compose + nginx reverse proxy + deployment notes
-- `docs/` architecture, security model, API/event contracts
+## Features
 
-## How we’ll work (important)
+- **Realtime collaboration**: shared editing, cursors/selections, and a participant list
+- **Rooms**: share a room link and code together
+- **Roles**: everyone joins as viewer; the room owner can promote editors
+- **Run code (shared output)**:
+  - JavaScript runs inside a Web Worker
+  - Python runs via Pyodide (WASM) inside a Web Worker
+  - stdout/stderr + a small recent run history is shared to everyone in the room
 
-We build in small milestones and learn as we go:
+## Tech stack
 
-1. implement a thin slice
-2. verify demo
-3. explain what we did (you explain back, I’ll prompt)
+- Next.js (App Router) + React + TypeScript
+- Monaco Editor (`@monaco-editor/react`)
+- Yjs + `y-monaco` for CRDT-based shared editing
+- Supabase:
+  - Auth (sessions)
+  - Realtime broadcast (transports Yjs updates + Awareness presence)
 
-Start here: `docs/LEARNING_TODOS.md`.
+## Architecture (current)
 
-Build journal: [Learning/BuildLogic/README.md](Learning/BuildLogic/README.md)
+- The editor state lives in a Yjs document.
+- Yjs document updates are broadcast via Supabase Realtime.
+- Presence/cursors use Yjs Awareness updates over the same broadcast channel.
+- “Run” executes on each client in a Web Worker.
+  - Python loads Pyodide from a CDN on first run.
 
-## Dev startup (Windows)
+Important limitation: collaboration state is **ephemeral** right now. A room is “live” while at least one participant is connected. There’s no persistence layer yet.
 
-You run 3 services:
+## Repo structure
 
-1. Collab server (Yjs WebSocket) – default `ws://localhost:1234`
-2. Engine (code execution API) – default `http://localhost:8080`
-3. Frontend (Next.js) – default `http://localhost:3000`
+- [frontend/](frontend/) — Next.js app (UI + auth + collaboration + in-browser runner)
+- [docs/](docs/) — short architecture + security notes
+- [Learning/](Learning/) — my build notes and implementation journal
 
-### One-time setup
+## Getting started (Windows)
 
-- Create env files:
-  - `collab/.env` from `collab/.env.example`
-  - `engine/.env` from `engine/.env.example`
-  - `frontend/.env.local` (see `frontend/README.md`)
+### 1) Create a Supabase project
 
-### Run (recommended)
+In Supabase:
 
-Use VS Code tasks:
+1. Create a new project
+2. Enable Email auth (or whichever providers you want)
+3. Ensure Realtime is available (broadcast is used for collaboration)
 
-- `dev:all` (starts everything)
-- `dev:collab`
-- `dev:engine`
-- `dev:frontend`
+### 2) Configure environment variables
 
-Or run the PowerShell launcher:
+Create `frontend/.env.local`:
 
-- `pwsh ./scripts/dev.ps1`
+```env
+NEXT_PUBLIC_SUPABASE_URL=...
+NEXT_PUBLIC_SUPABASE_ANON_KEY=...
+```
 
-If you see "port already in use", stop the previous process or change `PORT` in the corresponding `.env`.
+### 3) Run locally
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Open http://localhost:3000
+
+## Scripts
+
+From [frontend/](frontend/):
+
+- `npm run dev` — start dev server
+- `npm run build` — production build
+- `npm run start` — run production build
+- `npm run lint` — lint
+
+## Deployment
+
+This app is designed to deploy as “frontend only”.
+
+- Deploy [frontend/](frontend/) to Vercel (or any Next.js-capable host)
+- Add the same `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` in your hosting provider environment settings
+
+## Security notes / limitations
+
+- **Code execution is not sandboxed server-side.** It runs in the browser and should be treated as a demo runner.
+- Python uses Pyodide from a public CDN; the first run can take a few seconds.
+- Collaboration state is not persisted yet.
+
+## Roadmap
+
+- Persist room documents (Yjs snapshots/updates) into Supabase Postgres
+- Add basic e2e tests for collaboration flows
+- Improve runner UX (better errors, better cancellation, richer run history)
+
+## License
+
+See [LICENSE](LICENSE).
