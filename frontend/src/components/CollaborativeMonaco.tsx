@@ -20,12 +20,20 @@ import { presenceColor } from "@/components/collab/presence";
 import { usernameFromUser } from "@/components/collab/username";
 import type { SharedRunState } from "@/components/collab/runTypes";
 import { useSharedRun } from "@/components/collab/useSharedRun";
+import { useRoomPersistence } from "@/components/collab/useRoomPersistence";
 
 type Props = {
   roomId: string;
 };
 
 type Role = "viewer" | "editor";
+
+type JoinResponse = {
+  ok: boolean;
+  role?: "owner" | "editor" | "viewer";
+  ownerId?: string | null;
+  error?: string;
+};
 
 type PresenceUser = {
   id: string;
@@ -44,16 +52,23 @@ type Participant = {
   isOwner: boolean;
 };
 
+type RoomMemberRoleRow = {
+  user_id: string;
+  role: "owner" | "editor" | "viewer";
+};
+
 export default function CollaborativeMonaco({ roomId }: Props) {
+  const supabase = useMemo(() => createSupabaseBrowserClient(), []);
   const ydoc = useMemo(() => new Y.Doc(), []);
   const yRun = useMemo(() => ydoc.getMap<unknown>("run"), [ydoc]);
   const yStdout = useMemo(() => ydoc.getText("run:stdout"), [ydoc]);
   const yStderr = useMemo(() => ydoc.getText("run:stderr"), [ydoc]);
   const yRuns = useMemo(() => ydoc.getArray<unknown>("runs"), [ydoc]);
-  const yRoom = useMemo(() => ydoc.getMap<unknown>("room"), [ydoc]);
-  const yRoles = useMemo(() => ydoc.getMap<unknown>("roles"), [ydoc]);
   const awarenessRef = useRef<Awareness | null>(null);
   const channelRef = useRef<RealtimeChannel | null>(null);
+  const broadcastRef = useRef<
+    ((event: string, payload: Record<string, unknown>) => Promise<void>) | null
+  >(null);
   const bindingRef = useRef<{ destroy: () => void } | null>(null);
   const remoteStylesRef = useRef<HTMLStyleElement | null>(null);
   const monacoRef = useRef<typeof Monaco | null>(null);
@@ -67,6 +82,7 @@ export default function CollaborativeMonaco({ roomId }: Props) {
   >(null);
   const boundProviderRef = useRef<Awareness | null>(null);
   const seededDefaultRef = useRef<boolean>(false);
+  const initialSyncReadyRef = useRef<(() => void) | null>(null);
   const editorRef = useRef<
     import("monaco-editor").editor.IStandaloneCodeEditor | null
   >(null);
@@ -81,6 +97,7 @@ export default function CollaborativeMonaco({ roomId }: Props) {
   const [me, setMe] = useState<PresenceUser | null>(null);
   const [ownerId, setOwnerId] = useState<string | null>(null);
   const [myRole, setMyRole] = useState<Role>("viewer");
+  const [rolesByUserId, setRolesByUserId] = useState<Record<string, Role>>({});
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [isSynced, setIsSynced] = useState<boolean>(false);
 
@@ -97,6 +114,7 @@ export default function CollaborativeMonaco({ roomId }: Props) {
     cancelRun,
     runCode,
   } = useSharedRun({
+    roomId,
     ydoc,
     yRun,
     yStdout,
@@ -108,6 +126,107 @@ export default function CollaborativeMonaco({ roomId }: Props) {
     effectiveRole,
     isSynced,
   });
+
+  const canPersist = isOwner || effectiveRole === "editor";
+  const { hydrationStatus } = useRoomPersistence({
+    roomId,
+    ydoc,
+    enabled: canPersist,
+    isSynced,
+  });
+
+  const stderrForPanel =
+    sharedRun.error && sharedRun.error.trim().length > 0
+      ? [stderr, sharedRun.error].filter(Boolean).join("\n")
+      : stderr;
+
+  const [rateLimitNowMs, setRateLimitNowMs] = useState<number>(() =>
+    Date.now()
+  );
+  const rateLimitResetMs =
+    typeof sharedRun.rateLimitResetMs === "number"
+      ? sharedRun.rateLimitResetMs
+      : null;
+  const rateLimitSecondsLeft =
+    rateLimitResetMs != null
+      ? Math.max(0, Math.ceil((rateLimitResetMs - rateLimitNowMs) / 1000))
+      : 0;
+  const isRateLimitedActive =
+    sharedRun.phase === "rate-limited" &&
+    (rateLimitResetMs == null || rateLimitSecondsLeft > 0);
+
+  useEffect(() => {
+    if (!isRateLimitedActive) return;
+
+    const id = window.setInterval(() => {
+      setRateLimitNowMs(Date.now());
+    }, 250);
+    return () => window.clearInterval(id);
+  }, [isRateLimitedActive]);
+
+  useEffect(() => {
+    // When the cooldown finishes, clear the shared banner so everyone sees it disappear.
+    if (sharedRun.phase !== "rate-limited") return;
+    if (rateLimitResetMs == null) return;
+    if (rateLimitSecondsLeft > 0) return;
+
+    try {
+      ydoc.transact(() => {
+        yRun.set("phase", null);
+        yRun.set("message", null);
+        yRun.set("rateLimitLimit", null);
+        yRun.set("rateLimitWindowSec", null);
+        yRun.set("rateLimitRemaining", null);
+        yRun.set("rateLimitResetMs", null);
+      }, "clear-rate-limit");
+    } catch {
+      // ignore
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rateLimitResetMs, rateLimitSecondsLeft, sharedRun.phase]);
+
+  const applyJoinRole = useCallback((data: JoinResponse) => {
+    const dbOwnerId = data.ownerId ?? null;
+    if (dbOwnerId) setOwnerId(dbOwnerId);
+
+    if (data.role === "viewer") setMyRole("viewer");
+    if (data.role === "editor" || data.role === "owner") setMyRole("editor");
+  }, []);
+
+  const refreshMyMembership = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/rooms/${encodeURIComponent(roomId)}/join`, {
+        method: "POST",
+      });
+      const data = (await res.json()) as JoinResponse;
+      if (!res.ok || !data.ok) return;
+      applyJoinRole(data);
+    } catch {
+      // ignore
+    }
+  }, [applyJoinRole, roomId]);
+
+  const refreshRoomRoles = useCallback(async () => {
+    const { data, error } = await supabase
+      .from("room_members")
+      .select("user_id,role")
+      .eq("room_id", roomId)
+      .returns<RoomMemberRoleRow[]>();
+
+    if (error || !data) return;
+
+    const next: Record<string, Role> = {};
+    for (const row of data) {
+      next[row.user_id] = row.role === "viewer" ? "viewer" : "editor";
+    }
+    setRolesByUserId(next);
+  }, [roomId, supabase]);
+
+  useEffect(() => {
+    if (hydrationStatus === "hydrated") {
+      initialSyncReadyRef.current?.();
+    }
+  }, [hydrationStatus]);
 
   const canEdit = effectiveRole === "editor" && !isRunBusy && isSynced;
 
@@ -261,7 +380,6 @@ export default function CollaborativeMonaco({ roomId }: Props) {
   }, []);
 
   useEffect(() => {
-    const supabase = createSupabaseBrowserClient();
     let channel: RealtimeChannel | null = null;
     let awareness: Awareness | null = null;
     let hasInitialSync = false;
@@ -290,6 +408,31 @@ export default function CollaborativeMonaco({ roomId }: Props) {
       };
       setMe(nextMe);
 
+      let dbOwnerId: string | null = null;
+
+      // Ensure room + membership exist for RLS-protected persistence,
+      // and use DB-backed roles so a joiner never "becomes owner" by accident.
+      try {
+        const res = await fetch(
+          `/api/rooms/${encodeURIComponent(roomId)}/join`,
+          {
+            method: "POST",
+          }
+        );
+        const data = (await res.json()) as JoinResponse;
+        if (!res.ok || !data.ok) {
+          setStatus("error");
+          return;
+        }
+
+        dbOwnerId = data.ownerId ?? null;
+        applyJoinRole(data);
+        void refreshRoomRoles();
+      } catch {
+        setStatus("error");
+        return;
+      }
+
       // Transport: Supabase Realtime broadcast (no custom WS server required).
       // Presence/cursors: Yjs Awareness (broadcasted over Realtime).
       awareness = new Awareness(ydoc);
@@ -307,33 +450,18 @@ export default function CollaborativeMonaco({ roomId }: Props) {
       const handleInitialSyncReady = () => {
         if (hasInitialSync) return;
         hasInitialSync = true;
+
         setIsSynced(true);
 
         // Normalize newlines in the shared doc: ensure the Y.Text never contains `\r`.
         normalizeSharedNewlinesToLF();
 
-        // Room ownership + roles (Yjs-backed): run ONLY after initial sync.
-        // This prevents a late joiner from setting themselves as owner before they
-        // have received the existing owner's `ownerId`.
-        ydoc.transact(() => {
-          const existingOwner =
-            (yRoom.get("ownerId") as string | undefined) ?? null;
-          if (!existingOwner) yRoom.set("ownerId", nextMe.id);
-
-          const finalOwner =
-            (yRoom.get("ownerId") as string | undefined) ?? nextMe.id;
-          if (finalOwner === nextMe.id) {
-            yRoles.set(nextMe.id, "editor");
-          } else if (!yRoles.has(nextMe.id)) {
-            yRoles.set(nextMe.id, "viewer");
-          }
-        });
-
-        // Seed the default snippet only after initial sync, and only if the shared doc is empty.
+        // Seed the default snippet only after initial sync, only if the shared doc is empty,
+        // and only for the room owner.
         if (!seededDefaultRef.current) {
           seededDefaultRef.current = true;
           const ytext = ydoc.getText("monaco");
-          if (ytext.length === 0) {
+          if (ytext.length === 0 && dbOwnerId && dbOwnerId === nextMe.id) {
             ydoc.transact(() => {
               if (ytext.length === 0) {
                 ytext.insert(0, "print('Hello from PairPilot IDE')\n");
@@ -345,6 +473,13 @@ export default function CollaborativeMonaco({ roomId }: Props) {
         // Ensure Monaco binding exists once we're ready.
         ensureMonacoBinding();
       };
+
+      // Snapshot hydration runs outside this effect; let it flip us into a ready
+      // state without waiting for a peer-to-peer sync response.
+      initialSyncReadyRef.current = handleInitialSyncReady;
+      if (hydrationStatus === "hydrated") {
+        handleInitialSyncReady();
+      }
 
       const roomChannelName = `pairpilot:${roomId}`;
       channel = supabase.channel(roomChannelName, {
@@ -365,6 +500,8 @@ export default function CollaborativeMonaco({ roomId }: Props) {
           // ignore
         }
       };
+
+      broadcastRef.current = broadcast;
 
       // Listen for Yjs updates.
       channel.on(
@@ -400,6 +537,12 @@ export default function CollaborativeMonaco({ roomId }: Props) {
           }
         }
       );
+
+      // Roles changed (DB-backed): refresh roles + my membership.
+      channel.on("broadcast", { event: "roles-changed" }, () => {
+        void refreshRoomRoles();
+        void refreshMyMembership();
+      });
 
       // Initial sync handshake: new joiner broadcasts "hello".
       // Existing peers respond with a full state update (no persistence).
@@ -500,6 +643,10 @@ export default function CollaborativeMonaco({ roomId }: Props) {
           yRun.set("language", "python");
           yRun.set("phase", null);
           yRun.set("message", null);
+          yRun.set("rateLimitLimit", null);
+          yRun.set("rateLimitWindowSec", null);
+          yRun.set("rateLimitRemaining", null);
+          yRun.set("rateLimitResetMs", null);
           yRun.set("elapsedMs", null);
           yRun.set("stdoutBytes", null);
           yRun.set("stderrBytes", null);
@@ -530,6 +677,7 @@ export default function CollaborativeMonaco({ roomId }: Props) {
         // ignore
       }
       channelRef.current = null;
+      broadcastRef.current = null;
 
       try {
         awareness?.destroy();
@@ -541,30 +689,7 @@ export default function CollaborativeMonaco({ roomId }: Props) {
       ydoc.destroy();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roomId]);
-
-  useEffect(() => {
-    const applyRoomSnapshot = () => {
-      const nextOwner = (yRoom.get("ownerId") as string | null) ?? null;
-      setOwnerId(nextOwner);
-
-      if (me?.id) {
-        const role = (yRoles.get(me.id) as Role | undefined) ?? "viewer";
-        setMyRole(role);
-      }
-    };
-
-    applyRoomSnapshot();
-    const onRoom = () => applyRoomSnapshot();
-    const onRoles = () => applyRoomSnapshot();
-    yRoom.observe(onRoom);
-    yRoles.observe(onRoles);
-
-    return () => {
-      yRoom.unobserve(onRoom);
-      yRoles.unobserve(onRoles);
-    };
-  }, [me?.id, yRoom, yRoles]);
+  }, [applyJoinRole, refreshMyMembership, refreshRoomRoles, roomId, supabase]);
 
   useEffect(() => {
     const awareness = awarenessRef.current;
@@ -591,8 +716,7 @@ export default function CollaborativeMonaco({ roomId }: Props) {
         if (!userId) return;
 
         const name = typeof u?.name === "string" && u.name ? u.name : userId;
-        const role = ((yRoles.get(userId) as Role | undefined) ??
-          "viewer") as Role;
+        const role = (rolesByUserId[userId] ?? "viewer") as Role;
         const isOwnerUser = !!(ownerId && ownerId === userId);
         next.push({
           clientId,
@@ -624,14 +748,11 @@ export default function CollaborativeMonaco({ roomId }: Props) {
     const onAwareness = () => computeParticipants();
     // Awareness emits `change` events when peers update cursor/user state.
     awareness.on("change", onAwareness);
-    const onRoles = () => computeParticipants();
-    yRoles.observe(onRoles);
 
     return () => {
       awareness.off("change", onAwareness);
-      yRoles.unobserve(onRoles);
     };
-  }, [labelRemoteSelections, ownerId, yRoles]);
+  }, [labelRemoteSelections, ownerId, rolesByUserId]);
 
   useEffect(() => {
     // If the editor mounted before initial sync, bind now.
@@ -639,13 +760,30 @@ export default function CollaborativeMonaco({ roomId }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isSynced]);
 
-  const setRoleForUser = (userId: string, role: Role) => {
+  const setRoleForUser = async (userId: string, role: Role) => {
     if (!isOwner) return;
     if (!ownerId) return;
     if (userId === ownerId) return;
-    ydoc.transact(() => {
-      yRoles.set(userId, role);
-    });
+
+    try {
+      const res = await fetch(
+        `/api/rooms/${encodeURIComponent(roomId)}/members/role`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ userId, role }),
+        }
+      );
+      if (!res.ok) return;
+
+      await refreshRoomRoles();
+      await broadcastRef.current?.("roles-changed", {
+        roomId,
+        at: Date.now(),
+      });
+    } catch {
+      // ignore
+    }
   };
 
   return (
@@ -721,7 +859,10 @@ export default function CollaborativeMonaco({ roomId }: Props) {
                           className="pp-select"
                           value={p.role}
                           onChange={(e) =>
-                            setRoleForUser(p.userId, e.target.value as Role)
+                            void setRoleForUser(
+                              p.userId,
+                              e.target.value as Role
+                            )
                           }
                         >
                           <option value="viewer">viewer</option>
@@ -779,10 +920,42 @@ export default function CollaborativeMonaco({ roomId }: Props) {
         <button
           type="button"
           onClick={() => void runCode()}
-          disabled={isRunBusy || effectiveRole !== "editor"}
+          disabled={
+            isRunBusy || effectiveRole !== "editor" || isRateLimitedActive
+          }
           className="pp-button"
         >
           {isRunBusy ? "Running…" : "Run"}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            if (effectiveRole !== "editor") return;
+            if (isRunBusy) return;
+            ydoc.transact(() => {
+              if (yStdout.length > 0) yStdout.delete(0, yStdout.length);
+              if (yStderr.length > 0) yStderr.delete(0, yStderr.length);
+              if (yRuns.length > 0) yRuns.delete(0, yRuns.length);
+              yRun.set("state", "idle");
+              yRun.set("runId", null);
+              yRun.set("runBy", null);
+              yRun.set("phase", null);
+              yRun.set("message", null);
+              yRun.set("rateLimitLimit", null);
+              yRun.set("rateLimitWindowSec", null);
+              yRun.set("rateLimitRemaining", null);
+              yRun.set("rateLimitResetMs", null);
+              yRun.set("elapsedMs", null);
+              yRun.set("stdoutBytes", null);
+              yRun.set("stderrBytes", null);
+              yRun.set("error", null);
+            }, "clear-runs");
+          }}
+          disabled={isRunBusy || effectiveRole !== "editor"}
+          className="pp-button"
+        >
+          Clear runs
         </button>
 
         <label
@@ -812,21 +985,30 @@ export default function CollaborativeMonaco({ roomId }: Props) {
             <option value="javascript">JavaScript</option>
           </select>
         </label>
-
-        <p style={{ margin: 0, color: "var(--pp-muted)" }}>
-          Runner: Browser (Web Worker)
-        </p>
-
-        <p style={{ margin: 0, color: "var(--pp-muted)" }}>
-          Run: <strong>{sharedRun.state}</strong>
-          {sharedRun.runId ? <span> ({sharedRun.runId})</span> : null}
-        </p>
       </div>
 
-      {sharedRun.error ? (
-        <p style={{ marginTop: 8, color: "var(--pp-danger)" }}>
-          {sharedRun.error}
-        </p>
+      {sharedRun.phase === "rate-limited" && isRateLimitedActive ? (
+        <div
+          className="pp-panel"
+          style={{ marginTop: 10, padding: "10px 12px" }}
+        >
+          <div style={{ fontWeight: 700 }}>Rate limited</div>
+          <div className="pp-subtle" style={{ marginTop: 4 }}>
+            {sharedRun.message || "Please wait and try again."}
+          </div>
+          <div className="pp-subtle" style={{ marginTop: 6, fontSize: 12 }}>
+            {typeof sharedRun.rateLimitLimit === "number" &&
+            typeof sharedRun.rateLimitWindowSec === "number"
+              ? `Limit: ${sharedRun.rateLimitLimit} run per ${sharedRun.rateLimitWindowSec}s.`
+              : null}{" "}
+            {typeof sharedRun.rateLimitRemaining === "number"
+              ? `Remaining: ${sharedRun.rateLimitRemaining}.`
+              : null}{" "}
+            {isRateLimitedActive && rateLimitSecondsLeft > 0
+              ? `Try again in ${rateLimitSecondsLeft}s.`
+              : null}
+          </div>
+        </div>
       ) : null}
 
       {sharedRun.elapsedMs != null ? (
@@ -957,7 +1139,7 @@ export default function CollaborativeMonaco({ roomId }: Props) {
               color: "var(--foreground)",
             }}
           >
-            {stderr || "(empty)"}
+            {stderrForPanel || "(empty)"}
           </pre>
         </div>
       </div>
@@ -997,6 +1179,19 @@ export default function CollaborativeMonaco({ roomId }: Props) {
                 const runId =
                   typeof item.runId === "string" ? item.runId : "run";
                 const runBy = typeof item.runBy === "string" ? item.runBy : "";
+                const finishedAt =
+                  typeof item.finishedAt === "string" ? item.finishedAt : "";
+
+                let timeLabel = "";
+                if (finishedAt) {
+                  const d = new Date(finishedAt);
+                  if (!Number.isNaN(d.getTime())) {
+                    timeLabel = d.toLocaleTimeString([], {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    });
+                  }
+                }
 
                 const label = `${
                   language === "javascript" ? "js" : "py"
@@ -1014,7 +1209,9 @@ export default function CollaborativeMonaco({ roomId }: Props) {
                     }}
                   >
                     <span style={{ color: "var(--foreground)" }}>{label}</span>
-                    <span className="pp-subtle">{runBy}</span>
+                    <span className="pp-subtle">
+                      {[timeLabel, runBy].filter(Boolean).join(" · ")}
+                    </span>
                   </div>
                 );
               })}

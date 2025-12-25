@@ -5,6 +5,21 @@ export function getRunnerWorkerSource(): string {
   return `
 let pyodideReady = null;
 
+function normalizeNewlines(s) {
+  // Pyodide output can include CR or CRLF depending on environment.
+  // Normalize to LF so <pre> renders line breaks consistently.
+  // NOTE: This source is embedded in a template string, so we must double-escape backslashes.
+  return String(s).replace(/\\r\\n/g, '\\n').replace(/\\r/g, '\\n');
+}
+
+function normalizePythonChunk(s) {
+  const t = normalizeNewlines(s);
+  if (!t) return '';
+  // In some Pyodide stdout/stderr modes, output arrives as line chunks without a trailing "\\n".
+  // If there are no newlines at all, treat this chunk as a line and add one.
+  return t.includes('\\n') ? t : (t + '\\n');
+}
+
 function post(type, data) {
   self.postMessage({ type, ...data });
 }
@@ -40,10 +55,10 @@ self.onmessage = async (evt) => {
       const pyodide = await ensurePyodide();
       post('phase', { phase: 'running', message: 'Running Python…' });
       if (pyodide.setStdout) {
-        pyodide.setStdout({ batched: (s) => post('stdout', { data: s }) });
+        pyodide.setStdout({ batched: (s) => post('stdout', { data: normalizePythonChunk(s) }) });
       }
       if (pyodide.setStderr) {
-        pyodide.setStderr({ batched: (s) => post('stderr', { data: s }) });
+        pyodide.setStderr({ batched: (s) => post('stderr', { data: normalizePythonChunk(s) }) });
       }
       await pyodide.runPythonAsync(code);
     }

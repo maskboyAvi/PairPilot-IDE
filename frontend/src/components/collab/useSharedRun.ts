@@ -7,6 +7,7 @@ import { usernameFromUser } from "@/components/collab/username";
 import { getRunnerWorkerSource } from "@/components/collab/runnerWorkerSource";
 
 export function useSharedRun(params: {
+  roomId: string;
   ydoc: Y.Doc;
   yRun: Y.Map<unknown>;
   yStdout: Y.Text;
@@ -19,6 +20,7 @@ export function useSharedRun(params: {
   isSynced: boolean;
 }) {
   const {
+    roomId,
     ydoc,
     yRun,
     yStdout,
@@ -76,6 +78,10 @@ export function useSharedRun(params: {
         language: (yRun.get("language") as SharedRunState["language"]) ?? "python",
         phase: (yRun.get("phase") as string | null) ?? null,
         message: (yRun.get("message") as string | null) ?? null,
+        rateLimitLimit: (yRun.get("rateLimitLimit") as number | null) ?? null,
+        rateLimitWindowSec: (yRun.get("rateLimitWindowSec") as number | null) ?? null,
+        rateLimitRemaining: (yRun.get("rateLimitRemaining") as number | null) ?? null,
+        rateLimitResetMs: (yRun.get("rateLimitResetMs") as number | null) ?? null,
         elapsedMs: (yRun.get("elapsedMs") as number | null) ?? null,
         stdoutBytes: (yRun.get("stdoutBytes") as number | null) ?? null,
         stderrBytes: (yRun.get("stderrBytes") as number | null) ?? null,
@@ -181,6 +187,63 @@ export function useSharedRun(params: {
       return;
     }
 
+    // Server-enforced (but fail-open) rate limit.
+    try {
+      const rlRes = await fetch("/api/ratelimit/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ roomId }),
+      });
+
+      if (rlRes.status === 429) {
+        let limit: number | null = null;
+        let windowSec: number | null = null;
+        let remaining: number | null = null;
+        let resetMs: number | null = null;
+
+        try {
+          const data = (await rlRes.json()) as Partial<{
+            allowed: boolean;
+            remaining: number;
+            reset: number;
+            limit: number;
+            windowSec: number;
+          }>;
+          if (typeof data.limit === "number") limit = data.limit;
+          if (typeof data.windowSec === "number") windowSec = data.windowSec;
+          if (typeof data.remaining === "number") remaining = data.remaining;
+          if (typeof data.reset === "number") {
+            // Upstash reset is typically a unix timestamp in ms.
+            resetMs = data.reset > 1e12 ? data.reset : data.reset * 1000;
+          }
+        } catch {
+          // ignore parse failures
+        }
+
+        const windowLabel =
+          typeof windowSec === "number" ? `${windowSec}s` : "60s";
+        const limitLabel = typeof limit === "number" ? String(limit) : "";
+        const msg = limitLabel
+          ? `Rate limit reached: ${limitLabel} run per ${windowLabel}.`
+          : `Rate limit reached. Please wait and try again.`;
+
+        ydoc.transact(() => {
+          // Not a run failure; it's just a temporary throttle.
+          yRun.set("state", "idle");
+          yRun.set("phase", "rate-limited");
+          yRun.set("message", msg);
+          yRun.set("error", null);
+          yRun.set("rateLimitLimit", limit);
+          yRun.set("rateLimitWindowSec", windowSec);
+          yRun.set("rateLimitRemaining", remaining);
+          yRun.set("rateLimitResetMs", resetMs);
+        });
+        return;
+      }
+    } catch {
+      // fail-open
+    }
+
     const me = usernameFromUser(session?.user);
 
     const language = selectedLanguage;
@@ -204,6 +267,10 @@ export function useSharedRun(params: {
       yRun.set("language", language);
       yRun.set("phase", "starting");
       yRun.set("message", "Starting run (in browser)…");
+      yRun.set("rateLimitLimit", null);
+      yRun.set("rateLimitWindowSec", null);
+      yRun.set("rateLimitRemaining", null);
+      yRun.set("rateLimitResetMs", null);
       yRun.set("elapsedMs", null);
       yRun.set("stdoutBytes", 0);
       yRun.set("stderrBytes", 0);

@@ -3,15 +3,19 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev --webpack",
     "build": "next build",
     "start": "next start",
     "lint": "eslint"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
+    "@sentry/nextjs": "^9.46.0",
     "@supabase/ssr": "^0.8.0",
     "@supabase/supabase-js": "^2.88.0",
+    "@upstash/ratelimit": "^2.0.5",
+    "@upstash/redis": "^1.35.0",
+    "monaco-editor": "^0.52.0",
     "next": "16.0.10",
     "react": "19.2.1",
     "react-dom": "19.2.1",
@@ -23,6 +27,7 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@types/shimmer": "^1.2.0",
     "eslint": "^9",
     "eslint-config-next": "16.0.10",
     "typescript": "^5"

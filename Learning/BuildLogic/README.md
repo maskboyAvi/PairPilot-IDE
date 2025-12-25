@@ -14,3 +14,4 @@ These are my build notes for the current architecture:
 - [03-Collaboration-SupabaseBroadcast-Yjs.md](03-Collaboration-SupabaseBroadcast-Yjs.md)
 - [04-Runner-WebWorker-Pyodide.md](04-Runner-WebWorker-Pyodide.md)
 - [05-What-I’d-Improve-Next.md](05-What-I’d-Improve-Next.md)
+- [06-Persistence-Redis-Observability.md](06-Persistence-Redis-Observability.md)
