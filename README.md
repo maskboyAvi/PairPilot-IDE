@@ -1,8 +1,10 @@
 # PairPilot IDE
 
-PairPilot IDE is a Google-Docs-style collaborative code editor built with Monaco + Yjs, with Supabase Auth and presence. It also includes a deployment-friendly **Run** button that executes code **in the browser** (Web Workers + Pyodide).
+PairPilot IDE is a collaborative code editor (Monaco + Yjs) with Supabase-backed auth, presence, and rooms. It also includes an in-browser runner (Web Workers + Pyodide) so everyone in a room can see the same run output.
 
-I originally prototyped this as a multi-service system, then intentionally simplified it to a **frontend + Supabase** architecture so it’s easy to deploy and demo without running any servers.
+## Live link
+
+- https://pairpilot.app
 
 ## Features
 
@@ -23,7 +25,7 @@ I originally prototyped this as a multi-service system, then intentionally simpl
   - Auth (sessions)
   - Realtime broadcast (transports Yjs updates + Awareness presence)
 
-## Architecture (current)
+## Architecture
 
 - The editor state lives in a Yjs document.
 - Yjs document updates are broadcast via Supabase Realtime.
@@ -31,15 +33,22 @@ I originally prototyped this as a multi-service system, then intentionally simpl
 - “Run” executes on each client in a Web Worker.
   - Python loads Pyodide from a CDN on first run.
 
-Important limitation: collaboration state is **ephemeral** right now. A room is “live” while at least one participant is connected. There’s no persistence layer yet.
+Important limitation: collaboration state is currently **ephemeral**. A room is “live” while at least one participant is connected.
 
 ## Repo structure
 
 - [frontend/](frontend/) — Next.js app (UI + auth + collaboration + in-browser runner)
-- [docs/](docs/) — short architecture + security notes
-- [Learning/](Learning/) — my build notes and implementation journal
+- [docs/](docs/) — architecture, deployment, and security notes
+- [Learning/](Learning/) — engineering notes and implementation journal
 
-## Getting started (Windows)
+## Local setup
+
+### Prerequisites
+
+- Node.js (LTS recommended)
+- A Supabase project (Auth enabled)
+
+### 1) Create a Supabase project
 
 ### 1) Create a Supabase project
 
@@ -51,7 +60,7 @@ In Supabase:
 
 ### 2) Configure environment variables
 
-Create `frontend/.env.local`:
+Create `frontend/.env.local` (start from `frontend/.env.example`):
 
 ```env
 NEXT_PUBLIC_SUPABASE_URL=...
@@ -82,19 +91,16 @@ From [frontend/](frontend/):
 This app is designed to deploy as “frontend only”.
 
 - Deploy [frontend/](frontend/) to Vercel (or any Next.js-capable host)
-- Add the same `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` in your hosting provider environment settings
+- Add `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` in your hosting provider environment settings
+- Optional: configure Upstash rate limiting + Sentry monitoring via env vars
+
+Detailed steps: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
 
 ## Security notes / limitations
 
 - **Code execution is not sandboxed server-side.** It runs in the browser and should be treated as a demo runner.
 - Python uses Pyodide from a public CDN; the first run can take a few seconds.
 - Collaboration state is not persisted yet.
-
-## Roadmap
-
-- Persist room documents (Yjs snapshots/updates) into Supabase Postgres
-- Add basic e2e tests for collaboration flows
-- Improve runner UX (better errors, better cancellation, richer run history)
 
 ## License
 

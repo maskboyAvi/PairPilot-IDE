@@ -9,9 +9,16 @@ dist/
 *.exe
 *.out
 
-# Env
+# Env (ignore real env files)
 .env
-.env.*
+.env.local
+.env.production
+.env.development
+.env.*.local
+
+# Allow example env template
+!frontend/.env.example
+
 
 # OS
 .DS_Store

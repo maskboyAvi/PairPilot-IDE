@@ -1,6 +1,6 @@
-# BuildLogic (Current Implementation)
+# BuildLogic (Implementation Notes)
 
-These are my build notes for the current architecture:
+Implementation notes for the current architecture:
 
 - Next.js frontend
 - Supabase Auth + Realtime broadcast

@@ -1,23 +1,41 @@
 # Frontend
 
-This folder contains the Next.js app for PairPilot IDE.
+Next.js app (App Router) for PairPilot IDE.
 
-For the full project overview, setup instructions, and architecture notes, see the root README: [README.md](../README.md)
+Project overview and deployment docs:
+
+- Root README: [../README.md](../README.md)
+- Deployment: [../docs/DEPLOYMENT.md](../docs/DEPLOYMENT.md)
 
 ## Environment variables
 
-Create `frontend/.env.local`:
+1. Copy the template: `frontend/.env.example` → `frontend/.env.local`
+2. Fill in the required Supabase values.
 
-```env
-NEXT_PUBLIC_SUPABASE_URL=...
-NEXT_PUBLIC_SUPABASE_ANON_KEY=...
-```
+Required:
+
+- `NEXT_PUBLIC_SUPABASE_URL`
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+
+Optional:
+
+- `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` (rate limiting)
+- `NEXT_PUBLIC_SENTRY_DSN`, `SENTRY_DSN` (Sentry)
 
 ## Local development
 
 ```bash
 npm install
 npm run dev
+```
+
+Open http://localhost:3000
+
+## Production build
+
+```bash
+npm run build
+npm run start
 ```
 
 ## Scripts

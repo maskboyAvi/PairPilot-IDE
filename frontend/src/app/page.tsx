@@ -284,7 +284,8 @@ export default function HomePage() {
                         {"\n"}
                         <span className="pp-codeLine">
                           <span className="pp-codeIndent" />
-                          return {"{"}"total": total, "avg": round(avg, 2){"}"}
+                          return {"{"}&quot;total&quot;: total, &quot;avg&quot;:
+                          round(avg, 2){"}"}
                           <span
                             className="pp-cursor pp-cursorA"
                             data-user="Aviral"

@@ -1,14 +1,9 @@
 # Learning Notes
 
-This folder is my running set of notes while building PairPilot IDE.
+This folder contains engineering notes captured during development of PairPilot IDE.
 
-I keep these notes short and practical:
-
-- what I was trying to build
-- what I implemented in the code
-- what broke / what surprised me
-- what I’d change next
+These notes are optional reading and are not required to run or deploy the project.
 
 If you want the step-by-step implementation journal, start here:
 
-- [Learning/BuildLogic/README.md](BuildLogic/README.md)
+- [BuildLogic/README.md](BuildLogic/README.md)
