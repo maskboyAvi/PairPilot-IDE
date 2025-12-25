@@ -1,9 +1,12 @@
 # PairPilot IDE
 
 PairPilot IDE is a collaborative code editor (Monaco + Yjs) with Supabase-backed auth, presence, and rooms. It also includes an in-browser runner (Web Workers + Pyodide) so everyone in a room can see the same run output.
+<div align="center">
+  <img width="900" alt="image" src="https://github.com/user-attachments/assets/b70b8cad-a663-44ce-97b7-1585ac4a139d" />
+</div>
 
 ## Live link
-
+Check it out yourself : 
 <a href="https://pairpilot.app" target="_blank" rel="noopener noreferrer">
   https://pairpilot.app
 </a>
@@ -19,33 +22,6 @@ PairPilot IDE is a collaborative code editor (Monaco + Yjs) with Supabase-backed
   - Python runs via Pyodide (WASM) inside a Web Worker
   - stdout/stderr + a small recent run history is shared to everyone in the room
 
-### Feature videos
-
-## 1. Realtime collaboration
-
-<div align="center">
-<video src="frontend/public/feature-realtime.mp4" autoplay muted loop playsinline height="400" center> </video>
-</div>
-
-
-## 2. Roles
-
-<div align="center">
-<video src="frontend/public/feature-roles.mp4" autoplay muted loop playsinline height="400"></video>
-</div>
-
-## 3. Run output (shared)
-
-<div align="center">
-<video src="frontend/public/feature-runs.mp4" autoplay muted loop playsinline height="400"></video>
-</div>
-
-## 4. Persistence (snapshot)
-
-<div align="center">
-<video src="frontend/public/feature-persistence.mp4" autoplay muted loop playsinline height="400"></video>
-</div>
-
 ## Tech stack
 
 - Next.js (App Router) + React + TypeScript
@@ -59,6 +35,33 @@ PairPilot IDE is a collaborative code editor (Monaco + Yjs) with Supabase-backed
   - Postgres + RLS (rooms, room members/roles, snapshots)
 - Upstash Redis + `@upstash/ratelimit`
 - Sentry
+
+### Feature videos
+
+## 1. Realtime collaboration
+
+<div align="center">
+<video src="https://github.com/user-attachments/assets/a4e9d4cf-98f1-4efa-8c7b-46c940ce7c39" autoplay muted loop playsinline height="400"></video>
+</div>
+
+## 2. Roles
+
+<div align="center">
+<video src="https://github.com/user-attachments/assets/66d7796d-d4c9-40a5-b422-168edfc3ae5e" autoplay muted loop playsinline height="400"></video>
+</div>
+
+## 3. Run output (shared)
+
+<div align="center">
+<video src="https://github.com/user-attachments/assets/e124bf05-1f5b-4154-a8d7-db3944a7141b" autoplay muted loop playsinline height="400"></video>
+</div>
+
+
+## 4. Persistence (snapshot)
+
+<div align="center">
+<video src="https://github.com/user-attachments/assets/82d5c761-c315-4d08-b9e8-9a7b4d2b8937" autoplay muted loop playsinline height="400"></video>
+</div>
 
 ## Architecture
 
