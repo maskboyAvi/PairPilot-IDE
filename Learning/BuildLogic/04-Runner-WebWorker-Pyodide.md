@@ -1,25 +1,25 @@
 # 04) Runner: Web Worker + Pyodide
 
-I wanted a Run button that works on free tiers without running any execution backend.
+This document describes the in-browser runner used by the Run button.
 
-So I moved execution into the browser:
+Execution is performed in the browser:
 
 - JavaScript runs inside a Web Worker
 - Python runs inside a Web Worker using Pyodide
 
 ## Why a Web Worker
 
-Two reasons:
+Reasons:
 
-- I don’t want the UI to freeze while code runs.
-- I want a clean boundary so I can terminate execution.
+- Keeps the UI responsive while code runs.
+- Provides a clean boundary that can be terminated.
 
 ## How output works
 
 Inside the worker:
 
-- for JS, I hook `console.log` and `console.error` and forward messages back
-- for Python, I hook Pyodide stdout/stderr and forward messages back
+- for JS, `console.log` / `console.error` are captured and forwarded
+- for Python, Pyodide stdout/stderr are captured and forwarded
 
 In the UI:
 
@@ -28,7 +28,7 @@ In the UI:
 
 ## Errors
 
-I made sure any runner failure ends up in stderr, not just a status banner.
+Runner failures are surfaced in output so they are visible to all participants.
 
 That includes:
 
@@ -37,8 +37,7 @@ That includes:
 - worker crashes
 - timeouts
 
-## What I learned / gotchas
+## Notes
 
 - Pyodide is large, so the first Python run can take a few seconds.
-- This is not a secure sandbox; it’s “run in my own browser” execution.
-- It’s still worth doing because it keeps the project deployable and demo-friendly.
+- This is not a secure sandbox; execution happens in the browser.

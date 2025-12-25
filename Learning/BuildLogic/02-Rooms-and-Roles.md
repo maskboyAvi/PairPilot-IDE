@@ -1,12 +1,6 @@
 # 02) Rooms and roles
 
-I wanted a “share a link and start coding” flow.
-
-My constraints:
-
-- no database persistence yet
-- no separate collab server
-- still need basic access control (viewer vs editor)
+This document explains how rooms are identified and how permissions are enforced.
 
 ## Rooms
 
@@ -14,26 +8,29 @@ A room is identified by a `roomId` in the URL.
 
 When a user opens a room page, the client:
 
+- calls `POST /api/rooms/:roomId/join` to ensure membership exists
 - joins a Supabase Realtime channel named `pairpilot:<roomId>`
 - starts sending/receiving collaboration messages on that channel
 
 ## Roles
 
-I implemented a simple model:
+Roles are stored in Supabase Postgres and enforced by RLS.
 
-- Everyone joins as a viewer.
-- The first person in the room becomes the owner.
-- The owner can promote other users to editor.
+Role model:
+
+- Everyone joins as `viewer` by default.
+- The room creator is `owner`.
+- The owner can promote/demote users between `viewer` and `editor`.
 
 Where roles live:
 
-- I store `ownerId` and a `roles` map inside the shared Yjs document.
+- `room_members.role` (`owner | editor | viewer`)
 
-That has a nice property for the MVP:
+How roles change:
 
-- roles sync to everyone instantly without building a backend.
+- Owner calls `POST /api/rooms/:roomId/members/role`.
+- The API route verifies the caller is owner and relies on RLS as the final enforcement layer.
 
-## What I learned / gotchas
+## Notes
 
-- This is not “secure authorization” in the backend sense — it’s a shared state agreement.
-- If/when I add persistence, I’ll move owner/role enforcement into the database with RLS.
+- UI controls should reflect the current role, but authorization ultimately comes from Postgres RLS.

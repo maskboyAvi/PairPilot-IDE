@@ -1,8 +1,8 @@
 # 06 — Persistence + Redis + Observability
 
-This is the first “big-tech” upgrade pass I did while still keeping PairPilot IDE deployable on a free tier.
+This document describes the persistence, guardrails, and observability layers used by PairPilot IDE.
 
-The goal: keep the architecture “frontend + Supabase only” for collaboration, but add:
+Goal: keep the architecture “frontend + Supabase only” for collaboration, while adding:
 
 1. **Durable rooms** (Supabase Postgres persistence)
 2. **Server-side guardrails** (Upstash Redis rate limiting)
@@ -12,13 +12,11 @@ The goal: keep the architecture “frontend + Supabase only” for collaboration
 
 ## 1) Supabase persistence (Yjs snapshot)
 
-### Why I did it
+Realtime CRDT collaboration benefits from persistence so the room state remains available after everyone disconnects.
 
-Realtime CRDT collaboration is great, but without persistence the room state disappears when everyone leaves.
+PairPilot stores a **Yjs snapshot** for each room in Supabase Postgres.
 
-So I store a **Yjs snapshot** for each room in Supabase Postgres.
-
-### What I implemented
+### Implementation
 
 - A **single snapshot per room** in `room_snapshots.snapshot_b64`.
 - The snapshot is `base64(Y.encodeStateAsUpdate(ydoc))`.
@@ -30,9 +28,9 @@ Code:
 
 ### How it works (runtime flow)
 
-- When the editor mounts, I try to `GET /api/rooms/:roomId/snapshot`.
-- If a snapshot exists, I apply it into the local Yjs doc (`Y.applyUpdate`).
-- After the doc is synced/ready, I listen for Yjs `update` events and **debounce** saving.
+- When the editor mounts, the client calls `GET /api/rooms/:roomId/snapshot`.
+- If a snapshot exists, it is applied into the local Yjs doc (`Y.applyUpdate`).
+- After the doc is ready, Yjs `update` events are observed and snapshot saves are debounced.
 
 This is “last write wins” snapshotting (simple + reliable).
 
@@ -40,13 +38,11 @@ This is “last write wins” snapshotting (simple + reliable).
 
 ## 2) Supabase RLS + joining rooms
 
-### Why I did it
+Postgres Row Level Security (RLS) enforces access rules for rooms, membership, and snapshots.
 
-If I’m going to store state in Postgres, I want the database to enforce the access rules.
+### Implementation
 
-### What I implemented
-
-I use 3 tables:
+Tables:
 
 - `rooms` — the room metadata
 - `room_members` — who is in the room and what role they have
@@ -56,7 +52,7 @@ SQL is in:
 
 - [docs/SUPABASE_SCHEMA.sql](../../docs/SUPABASE_SCHEMA.sql)
 
-To make RLS work, I also added a “join” endpoint:
+To make RLS work cleanly, the app uses a “join” endpoint:
 
 - [frontend/src/app/api/rooms/[roomId]/join/route.ts](../../frontend/src/app/api/rooms/%5BroomId%5D/join/route.ts)
 
@@ -71,15 +67,13 @@ This ensures the subsequent snapshot `GET/POST` requests are authorized by RLS.
 
 ## 3) Upstash Redis rate limiting (Run)
 
-### Why I did it
-
-Even though code runs in the browser worker (so there’s no server execution bill), I still want:
+Even though code runs in the browser worker, rate limiting helps reduce spam and accidental repeated runs.
 
 - protection against spam clicking
 - protection against accidental infinite loops “run, run, run”
 - a place to add future guardrails (locks, quotas, abuse prevention)
 
-### What I implemented
+### Implementation
 
 A server-side rate-limit endpoint:
 
@@ -91,7 +85,7 @@ The client calls it **right before starting the worker**:
 
 Policy right now:
 
-- `10 runs / 60s` per `(roomId, userId)`.
+- `3 runs / 60s` per `(roomId, userId)`.
 
 It’s intentionally **fail-open** (if Upstash is down or not configured, the IDE still works).
 
@@ -99,31 +93,27 @@ It’s intentionally **fail-open** (if Upstash is down or not configured, the ID
 
 ## 4) Observability (baseline)
 
-### Why I did it
+Sentry can be enabled to capture errors from both the browser and server/edge runtimes.
 
-When I start deploying this (even on free tiers), I want to answer:
+### Implementation
 
-- “What errors are happening?”
-- “Which routes are failing?”
-- “What do users hit right before a crash?”
+Sentry configuration:
 
-### What I implemented
+- App Router initialization:
+  - [frontend/src/instrumentation.ts](../../frontend/src/instrumentation.ts)
+  - [frontend/src/instrumentation-client.ts](../../frontend/src/instrumentation-client.ts)
+  - [frontend/src/app/global-error.tsx](../../frontend/src/app/global-error.tsx)
+- Runtime config:
+  - [frontend/sentry.server.config.ts](../../frontend/sentry.server.config.ts)
+  - [frontend/sentry.edge.config.ts](../../frontend/sentry.edge.config.ts)
+- Next.js build integration:
+  - [frontend/next.config.ts](../../frontend/next.config.ts)
 
-I added Sentry config files:
-
-- [frontend/sentry.client.config.ts](../../frontend/sentry.client.config.ts)
-- [frontend/sentry.server.config.ts](../../frontend/sentry.server.config.ts)
-- [frontend/sentry.edge.config.ts](../../frontend/sentry.edge.config.ts)
-
-…and wrapped the Next config:
-
-- [frontend/next.config.ts](../../frontend/next.config.ts)
-
-Note: the repo uses a very new Next.js version, so I installed Sentry using `--legacy-peer-deps`. It builds fine, but if I ever hit weird tooling bugs, the first thing I’d try is aligning versions.
+The Next.js config enables a Sentry tunnel route (`/monitoring`) to reduce ad-blocker interference.
 
 ---
 
-## Env vars I needed
+## Environment variables
 
 ### Supabase
 
@@ -139,16 +129,3 @@ Note: the repo uses a very new Next.js version, so I installed Sentry using `--l
 
 - `SENTRY_DSN` (server)
 - `NEXT_PUBLIC_SENTRY_DSN` (browser)
-
----
-
-## Can Grafana dashboards be public later?
-
-Yes, usually.
-
-Two common approaches:
-
-- **Public dashboards / share links** (Grafana Cloud and self-hosted often support this)
-- **Dashboard snapshots** (static, safer for demos)
-
-The big thing I’d watch: don’t expose anything sensitive (user IDs, room IDs, raw logs) if you’re sharing publicly.

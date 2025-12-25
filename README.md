@@ -4,36 +4,76 @@ PairPilot IDE is a collaborative code editor (Monaco + Yjs) with Supabase-backed
 
 ## Live link
 
-- https://pairpilot.app
+<a href="https://pairpilot.app" target="_blank" rel="noopener noreferrer">
+  https://pairpilot.app
+</a>
 
 ## Features
 
 - **Realtime collaboration**: shared editing, cursors/selections, and a participant list
 - **Rooms**: share a room link and code together
 - **Roles**: everyone joins as viewer; the room owner can promote editors
+- **Persistence**: room state is saved to Supabase Postgres (Yjs snapshot)
 - **Run code (shared output)**:
   - JavaScript runs inside a Web Worker
   - Python runs via Pyodide (WASM) inside a Web Worker
   - stdout/stderr + a small recent run history is shared to everyone in the room
 
+### Feature videos
+
+## 1. Realtime collaboration
+
+<div align="center">
+<video src="frontend/public/feature-realtime.mp4" autoplay muted loop playsinline height="400" center> </video>
+</div>
+
+
+## 2. Roles
+
+<div align="center">
+<video src="frontend/public/feature-roles.mp4" autoplay muted loop playsinline height="400"></video>
+</div>
+
+## 3. Run output (shared)
+
+<div align="center">
+<video src="frontend/public/feature-runs.mp4" autoplay muted loop playsinline height="400"></video>
+</div>
+
+## 4. Persistence (snapshot)
+
+<div align="center">
+<video src="frontend/public/feature-persistence.mp4" autoplay muted loop playsinline height="400"></video>
+</div>
+
 ## Tech stack
 
 - Next.js (App Router) + React + TypeScript
-- Monaco Editor (`@monaco-editor/react`)
+- Monaco Editor
 - Yjs + `y-monaco` for CRDT-based shared editing
+- Web Workers (in-browser runner)
+- Pyodide (Python in the browser)
 - Supabase:
   - Auth (sessions)
   - Realtime broadcast (transports Yjs updates + Awareness presence)
+  - Postgres + RLS (rooms, room members/roles, snapshots)
+- Upstash Redis + `@upstash/ratelimit`
+- Sentry
 
 ## Architecture
 
 - The editor state lives in a Yjs document.
 - Yjs document updates are broadcast via Supabase Realtime.
 - Presence/cursors use Yjs Awareness updates over the same broadcast channel.
+- On room load, a persisted snapshot is loaded from Supabase Postgres (if available) and applied to the Yjs document.
+- The client periodically saves a fresh snapshot back to Supabase.
 - “Run” executes on each client in a Web Worker.
   - Python loads Pyodide from a CDN on first run.
 
-Important limitation: collaboration state is currently **ephemeral**. A room is “live” while at least one participant is connected.
+Notes:
+
+- “Run” is a browser runner (no server-side sandbox).
+- Persistence is snapshot-based (simple and reliable for this architecture).
 
 ## Repo structure
 
@@ -50,12 +90,10 @@ Important limitation: collaboration state is currently **ephemeral**. A room is 
 
 ### 1) Create a Supabase project
 
-### 1) Create a Supabase project
-
 In Supabase:
 
 1. Create a new project
-2. Enable Email auth (or whichever providers you want)
+2. Enable Email auth
 3. Ensure Realtime is available (broadcast is used for collaboration)
 
 ### 2) Configure environment variables
@@ -100,7 +138,6 @@ Detailed steps: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
 
 - **Code execution is not sandboxed server-side.** It runs in the browser and should be treated as a demo runner.
 - Python uses Pyodide from a public CDN; the first run can take a few seconds.
-- Collaboration state is not persisted yet.
 
 ## License
 

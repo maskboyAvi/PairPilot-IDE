@@ -1,4 +1,4 @@
--- PairPilot IDE / PairPilot rooms persistence schema
+-- PairPilot IDE — Supabase rooms persistence schema
 -- Rooms table (metadata)
 create table if not exists public.rooms (
     id text primary key,
@@ -17,7 +17,7 @@ create table if not exists public.room_members (
     primary key (room_id, user_id)
 );
 
--- One snapshot per room (base64 of Y.encodeStateAsUpdate(doc))
+-- One snapshot per room (base64 encoding of Y.encodeStateAsUpdate(doc))
 create table if not exists public.room_snapshots (
     room_id text primary key references public.rooms (id) on delete cascade,
     snapshot_b64 text not null,

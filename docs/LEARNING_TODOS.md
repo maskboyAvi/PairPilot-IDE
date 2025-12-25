@@ -1,55 +1,57 @@
-# Learning TODOs (non-trivial)
+# Learning path
+
+This document outlines a structured way to understand and extend the project.
 
 ## Milestone 0 — Tooling + fundamentals
 
-1. Install and verify: Node LTS + Git.
-2. Explain back: CRDTs at a high level and what Yjs is doing for us.
+1. Install Node.js (LTS) and Git.
+2. Review the core collaboration model:
+   - CRDT basics
+   - Yjs document updates
+   - Awareness (presence)
 
-## Milestone 1 — Supabase Auth
+## Milestone 1 — Authentication (Supabase)
 
-Your task:
+1. Create a Supabase project.
+2. Configure environment variables in `frontend/.env.local`.
+3. Verify the app can:
+   - sign up
+   - sign in
+   - restore a session on refresh
 
-- Configure Supabase Auth for local dev.
-- Understand how Next.js server actions and the browser client read the session.
+## Milestone 2 — Rooms, roles, and persistence
 
-Explain back prompts:
+1. Review the database schema in `docs/SUPABASE_SCHEMA.sql`.
+2. Understand the room join flow:
+   - `POST /api/rooms/:roomId/join`
+   - membership rows in `room_members`
+3. Understand persistence:
+   - snapshot load: `GET /api/rooms/:roomId/snapshot`
+   - snapshot save: `POST /api/rooms/:roomId/snapshot`
 
-- What data do I trust from the client vs from Supabase?
-- Why do I keep `NEXT_PUBLIC_SUPABASE_ANON_KEY` public?
+## Milestone 3 — Collaboration transport (Realtime)
 
-## Milestone 2 — Collaboration (no custom server)
+1. Understand the room channel naming: `pairpilot:<roomId>`.
+2. Review broadcast events:
+   - `yjs-update`
+   - `awareness-update`
+3. Review the initial sync behavior (snapshot-first, then realtime updates).
 
-Your task:
+## Milestone 4 — Runner (in browser)
 
-- Bind Monaco to a Yjs document.
-- Transport Yjs updates over Supabase Realtime broadcast.
-- Send Awareness updates for cursors/presence.
+1. JavaScript execution in a Web Worker.
+2. Python execution via Pyodide in a Web Worker.
+3. Shared run state:
+   - stdout/stderr and run history are shared through Yjs
 
-Explain back:
+## Milestone 5 — Guardrails and observability (optional)
 
-- What does “ephemeral rooms” mean in this architecture?
-- Why do I need a “hello/sync” handshake when there’s no persistence?
+1. Rate limiting:
+   - `POST /api/ratelimit/run` (Upstash)
+2. Observability:
+   - Sentry setup for browser + server/edge
 
-## Milestone 3 — Runner (in browser)
+## Milestone 6 — Deployment
 
-Your task:
-
-- Run JavaScript in a Web Worker.
-- Run Python via Pyodide in a Web Worker.
-- Make sure worker errors show up in stderr.
-
-Explain back:
-
-- Why a Worker (and not running on the main thread)?
-- What are the security limits of browser execution?
-
-## Milestone 4 — Deployment
-
-Your task:
-
-- Deploy the frontend (Vercel or similar).
-- Configure Supabase env vars in production.
-
-Explain back:
-
-- What breaks if the room is empty and someone joins later?
+1. Deploy to Vercel with `frontend` as the root directory.
+2. Configure required environment variables.

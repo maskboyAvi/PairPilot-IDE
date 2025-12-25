@@ -1,30 +1,26 @@
 # 01) Auth and identity
 
-I wanted the project to be dead simple to deploy, so I avoided running my own auth backend. I chose Supabase Auth because it gives me:
+PairPilot IDE uses Supabase Auth so the app can run without a custom backend while still providing user identity for rooms, presence, and permissions.
 
-- hosted sign-up/sign-in
-- sessions I can read on the server and in the browser
-- an easy identity source for collaboration presence
-
-## What I implemented
+## Implementation
 
 - Sign up / sign in pages in the Next.js app.
 - A browser Supabase client for client-side actions.
-- A server Supabase client for server actions.
+- A server Supabase client for API routes.
 
-## How I use identity in the app
+## Identity usage
 
-In a room, I need a stable identifier and a friendly label:
+In a room, the UI needs a stable identifier and a friendly label:
 
-- `userId`: I use the Supabase user id when available.
-- `displayName`: I derive a short username (from metadata or email local-part).
+- `userId`: the Supabase user id.
+- `displayName`: a derived short username (metadata or email local-part).
 
-That identity is what I attach to Yjs Awareness presence so other clients can show:
+That identity is attached to Yjs Awareness presence so other clients can show:
 
 - who is connected
 - cursor color and label
 
-## What I learned / gotchas
+## Notes
 
-- I keep the anon key on the client because that’s how Supabase is designed; real protection comes from RLS when you have tables.
-- If I later persist documents, I’ll need an explicit room membership model with RLS.
+- The anon key is public by design; access control comes from Postgres RLS.
+- Membership and roles are stored in Postgres (`room_members`) and enforced by RLS.

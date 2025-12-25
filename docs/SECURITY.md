@@ -1,31 +1,54 @@
-# Security model (first draft)
+# Security model
 
-## What I’m protecting (current)
+## Scope
 
-- Users should only collaborate in rooms they know the link for.
-- A room owner should be able to control who can edit.
-- “Run” should not crash the app and should surface errors clearly.
+This project is a “frontend + Supabase” application. Collaboration and access control are enforced using Supabase Auth + Postgres Row Level Security (RLS). Code execution runs in the user’s browser.
 
-## What I am NOT claiming (important)
+## Key security properties
 
-- The runner is **not** a secure server-side sandbox.
-- Code executes **in the browser**. Treat it as a demo runner.
+- Authentication is required to use the app.
+- Room access and role changes are governed by database-backed membership and RLS.
+- Runner output is treated as text (not HTML) to reduce XSS risk.
 
-## Threats I assume
+## What this project does NOT provide
 
-- Untrusted code execution (malicious or accidental infinite loops)
-- Abuse (spamming runs, huge outputs)
-- XSS-style issues if I ever start rendering output as HTML (I currently treat output as text)
+- No server-side sandbox for code execution.
+  - JavaScript and Python execution happens in the browser (Web Worker + Pyodide).
+  - Treat the runner as a demo feature, not a hardened execution environment.
 
-## Current controls
+## Threat model (high level)
 
-- Supabase Auth is required to join/use the app.
-- Roles are enforced client-side using a shared Yjs-backed role map (owner can promote editors).
-- Runs are executed in a Web Worker with a timeout.
-- Worker errors are routed into stderr so failures are visible.
+- Untrusted code execution: infinite loops, heavy computation, large outputs.
+- Abuse: rapid repeated runs or automated spamming.
+- Output injection risks if output is ever rendered as HTML.
 
-## Known gaps / next steps
+## Controls
 
-- Persistence: rooms are ephemeral right now.
-- Real authorization: if/when I persist docs, I’ll need proper RLS and room membership rules.
-- Stronger sandboxing: if I ever move “Run” server-side, I’ll need real isolation and rate limiting.
+### Identity
+
+- Supabase Auth provides user identity and session handling.
+
+### Authorization
+
+- Room membership and roles are stored in Postgres (`room_members`).
+- Room snapshots are stored in Postgres (`room_snapshots`).
+- Postgres RLS policies restrict reads/writes to authorized users.
+
+### Runner safety
+
+- Execution happens in a Web Worker (keeps UI responsive).
+- Runs use a timeout and surface errors in stderr/output.
+
+### Rate limiting (optional)
+
+- If Upstash credentials are configured, `POST /api/ratelimit/run` enforces a per-user-per-room sliding window limit.
+- If Upstash is not configured or unavailable, the rate limiter fails open to avoid breaking the app.
+
+### Observability (optional)
+
+- Sentry can be enabled for error monitoring (browser + server/edge).
+
+## Limitations
+
+- Browser execution cannot be treated as an isolation boundary.
+- Persistence is snapshot-based, which is simple and reliable but not an append-only audit log.

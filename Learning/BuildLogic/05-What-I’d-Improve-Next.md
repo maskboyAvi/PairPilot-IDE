@@ -1,24 +1,24 @@
-# 05) What I’d improve next
+# 05) Extension ideas
 
-This is the list I keep for myself after getting the MVP working.
+This document lists potential areas to extend or harden the project.
 
 ## Collaboration
 
-- Add persistence so rooms don’t disappear when everyone leaves.
-- Make the initial sync more reliable by storing a periodic snapshot.
+- Improve conflict handling for concurrent snapshot saves (e.g., stronger merge strategy or update log).
+- Add visibility into sync status (snapshot loaded, realtime connected, peer sync fallback).
 
 ## Roles / access control
 
-- Move from “shared doc role map” to real authorization rules.
-- If I add persistence, enforce room membership with Supabase RLS.
+- Add admin UX for membership management (invite/remove members, transfer ownership).
+- Expand role model if needed (e.g., read-only rooms or time-limited access).
 
 ## Runner
 
-- Improve JS runner ergonomics (async results, richer stack traces).
-- Add nicer language presets/snippets.
-- Consider a stronger sandbox later (only if I move execution server-side).
+- Improve JavaScript runner ergonomics (async evaluation, richer error formatting).
+- Add language presets/snippets.
+- Add stronger isolation only if execution is ever moved server-side.
 
 ## Quality
 
-- Add a small e2e test suite (collaboration + run flows).
-- Improve observability around Realtime connection state.
+- Add end-to-end tests for auth, room join, collaboration, and run flows.
+- Add monitoring around Realtime connectivity and snapshot persistence.
